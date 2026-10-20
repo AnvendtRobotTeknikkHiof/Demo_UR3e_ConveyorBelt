@@ -1,0 +1,47 @@
+# URScript for UR3#1 (PolyScope 5.x): picks items off the Omron onto the conveyor.
+# PC_IP is the IP of the computer running main.py.
+#
+# Waits for (1,0) = Omron arrived, then picks while the SICK PIM60 sees an
+# item, and replies "FINISHED <k>" with the number of items picked.
+# Replace camera_sees_item(), pick_from_omron() and place_on_conveyor()
+# with your own I/O and moves.
+
+PC_IP = "192.168.1.10"
+PC_PORT = 50001
+
+def camera_sees_item():
+  # TODO: read the PIM60 result, e.g. get_standard_digital_in(0)
+  return False
+end
+
+def pick_from_omron():
+  # TODO: movej/movel + gripper, using the camera position if available
+  sleep(1)
+end
+
+def place_on_conveyor():
+  # TODO: movej/movel + release
+  sleep(1)
+end
+
+while not socket_open(PC_IP, PC_PORT, "pc"):
+  textmsg("PC not reachable, retrying")
+  sleep(1)
+end
+
+while True:
+  textmsg("Waiting for Omron")
+  cmd = [0, 0, 0]
+  while cmd[0] != 2 or cmd[1] != 1:
+    cmd = socket_read_ascii_float(2, "pc")
+  end
+
+  done = 0
+  while camera_sees_item():
+    pick_from_omron()
+    place_on_conveyor()
+    done = done + 1
+  end
+
+  socket_send_line(str_cat("FINISHED ", done), "pc")
+end

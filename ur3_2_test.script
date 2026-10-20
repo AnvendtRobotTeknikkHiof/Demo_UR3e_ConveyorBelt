@@ -1,0 +1,76 @@
+# Helpers for the UR3#2 conveyor-tracking test (PolyScope 5, e-Series).
+# Load this file in a Script node (type: File) in BeforeStart.
+# The moves, gripper and Conveyor Tracking node are normal PolyScope nodes,
+# see the program tree in the comment at the bottom.
+
+PC_IP = "10.44.33.19"      # TODO: IP of the PC running test_conveyor.py
+PC_PORT = 50002
+CONVEYOR_DO = 1             # standard digital output that runs the belt
+ENCODER = 0                 # encoder index used in Installation -> Conveyor Tracking
+TICKS_PER_M = 1825             # TODO: same value as in Installation -> Conveyor Tracking
+SENSOR_TO_PICK_M = 0.26      # TODO: belt distance from sensor 1 to where you taught the pick
+
+def connect_pc():
+  while not socket_open(PC_IP, PC_PORT, "pc"):
+    textmsg("PC not reachable, retrying")
+    sleep(1)
+  end
+end
+
+# Block until a full (cmd,arg) message arrives, return it as [2, cmd, arg]
+def read_cmd():
+  cmd = [0, 0, 0]
+  while cmd[0] != 2:
+    cmd = socket_read_ascii_float(2, "pc")
+  end
+  return cmd
+end
+
+# Wait until the belt has moved the item from the trigger sensor to the pick spot.
+# t0 = encoder count saved when the trigger arrived.
+def wait_until_at_pick(t0):
+  target = SENSOR_TO_PICK_M * TICKS_PER_M
+  textmsg("wait_until_at_pick: t0 = ", t0)
+  textmsg("wait_until_at_pick: target ticks = ", target)
+  moved = 0
+  cycles = 0                  # DEBUG: log progress about twice per second
+  while moved < target:
+    moved = norm(encoder_unwind_delta_tick_count(ENCODER, encoder_get_tick_count(ENCODER) - t0))
+    cycles = cycles + 1
+    if cycles % 250 == 0:     # DEBUG
+      textmsg("wait_until_at_pick: moved ticks = ", moved)
+    end
+    sync()
+  end
+  textmsg("wait_until_at_pick: done, moved ticks = ", moved)
+end
+
+set_standard_digital_out(CONVEYOR_DO, False)
+connect_pc()
+
+# ---------------------------------------------------------------------------
+# PolyScope program tree for UR3#2 (build these nodes on the pendant):
+#
+# BeforeStart
+#   Script (File): ur3_2_test.script          <- this file
+#   Assignment: cmd := [0, 0, 0]              <- so the If nodes below know "cmd"
+#   MoveJ: Ready                              <- above the belt, before the pick spot
+# Robot Program  (loops)
+#   Script (Line): cmd = read_cmd()
+#   If cmd[1] == 2                            # conveyor start
+#     Set: DO1 = HI
+#   ElseIf cmd[1] == 4                        # conveyor stop
+#     Set: DO1 = LO
+#   ElseIf cmd[1] == 3    n                      # item at the trigger sensor
+#     Script (Line): t0 = encoder_get_tick_count(ENCODER)
+#     Script (Line): wait_until_at_pick(t0)
+#     Conveyor Tracking
+#       MoveL: Approach                       <- taught above the item
+#       MoveL: Grasp                          <- taught at the item
+#       Gripper close                         <- your gripper node / DO
+#       MoveL: Lift
+#     MoveJ: Place                            <- fixed drop spot
+#     Gripper open
+#     MoveJ: Ready
+#     Script (Line): socket_send_line("FINISHED 1", "pc")
+# ---------------------------------------------------------------------------

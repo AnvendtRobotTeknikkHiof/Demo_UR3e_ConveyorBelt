@@ -1,0 +1,57 @@
+# URScript for UR3#2 (PolyScope 5.x): runs the conveyor and picks items off
+# the belt onto the Omron. PC_IP is the IP of the computer running main.py.
+#
+#   (2,0) = Omron left UR3#1  -> start the conveyor
+#   (1,k) = Omron arrived     -> pick k items onto the Omron, stop the
+#                                conveyor, reply "FINISHED <k>"
+# Replace the TODO functions with your conveyor output and the
+# conveyor-tracking pick (encoder set up in the Installation tab).
+
+PC_IP = "192.168.1.10"
+PC_PORT = 50002
+
+def conveyor_on():
+  # TODO: e.g. set_standard_digital_out(0, True)
+  textmsg("conveyor on")
+end
+
+def conveyor_off():
+  # TODO: e.g. set_standard_digital_out(0, False)
+  textmsg("conveyor off")
+end
+
+def pick_from_conveyor():
+  # TODO: conveyor-tracking pick + gripper
+  sleep(1)
+end
+
+def place_on_omron():
+  # TODO: movej/movel + release
+  sleep(1)
+end
+
+while not socket_open(PC_IP, PC_PORT, "pc"):
+  textmsg("PC not reachable, retrying")
+  sleep(1)
+end
+
+while True:
+  cmd = [0, 0, 0]
+  while cmd[0] != 2:
+    cmd = socket_read_ascii_float(2, "pc")
+  end
+
+  if cmd[1] == 2:
+    conveyor_on()
+  elif cmd[1] == 1:
+    conveyor_on()   # in case this program was restarted after (2,0)
+    done = 0
+    while done < cmd[2]:
+      pick_from_conveyor()
+      place_on_omron()
+      done = done + 1
+    end
+    conveyor_off()
+    socket_send_line(str_cat("FINISHED ", done), "pc")
+  end
+end
