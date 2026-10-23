@@ -1,0 +1,53 @@
+# pick_belt_server.script - RobotLab pick demo, stage 2 (PolyScope 5.21, UR3e)
+# Put this in a Script node (File) as the only node of the main program, in place
+# of the Wait. "Program Loops Forever" must be ticked: each pass carries out at most
+# one belt command from the laptop. The arm does not move.
+#
+# Laptop -> robot (RTDE input registers):
+#   int 25    command: 1 = run forward, 2 = run backward, 3 = stop
+#   int 26    sequence number; a command runs once, when this changes
+#   float 24  conveyor_speed in volts for run commands (limited to 0-2 V here)
+#   float 25  pause in seconds between conveyor_stop Low and the start pulse
+# Robot -> laptop:
+#   int 26    sequence number of the last command carried out
+#
+# conveyor_fwd = DO5, conveyor_bcwd = DO6, conveyor_stop = DO7, conveyor_speed = AO1
+# (voltage, 0-10 V). The run outputs latch: a short pulse starts the belt and only
+# conveyor_stop stops it. After a stop command conveyor_stop stays High (belt
+# blocked) until the next run command.
+
+belt_seq = read_input_integer_register(26)
+if belt_seq != read_output_integer_register(26):
+  belt_cmd = read_input_integer_register(25)
+  if belt_cmd == 1 or belt_cmd == 2:
+    belt_volts = read_input_float_register(24)
+    if belt_volts < 0.0:
+      belt_volts = 0.0
+    elif belt_volts > 2.0:
+      belt_volts = 2.0
+    end
+    set_standard_analog_out(1, belt_volts / 10.0)
+    set_standard_digital_out(5, False)
+    set_standard_digital_out(6, False)
+    set_standard_digital_out(7, False)
+    belt_pause = read_input_float_register(25)
+    if belt_pause > 0.0:
+      sleep(belt_pause)
+    end
+    if belt_cmd == 1:
+      set_standard_digital_out(5, True)
+    else:
+      set_standard_digital_out(6, True)
+    end
+    sleep(0.3)
+    set_standard_digital_out(5, False)
+    set_standard_digital_out(6, False)
+  elif belt_cmd == 3:
+    set_standard_digital_out(5, False)
+    set_standard_digital_out(6, False)
+    set_standard_digital_out(7, True)
+  end
+  write_output_integer_register(26, belt_seq)
+else:
+  sleep(0.02)
+end

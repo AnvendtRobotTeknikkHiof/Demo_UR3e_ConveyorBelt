@@ -1,0 +1,22 @@
+# pick_grip_check.script - RobotLab pick demo, stage 6 (PolyScope 5.21, UR3e)
+# Put this in a Script node (File) in the main program, right BELOW
+# stop_conveyor_tracking(), so it runs after the gripper has closed and lifted.
+#
+# It asks the Robotiq URCap's gripper server on the controller (port 63352, the same
+# server the Gripper nodes use) whether the gripper holds something, and tells the laptop:
+#   output int 28  OBJ: 2 = holds the cylinder, 3 = closed on nothing,
+#                  0 = no answer (or still moving), -1 = could not connect
+#   output int 29  the job number this check belongs to (input int 27)
+# The program writes output int 27 (job done) at its end, after these two.
+# Nothing else changes: on a miss the robot still goes to the table and opens the empty
+# gripper there (that is the release). The laptop stops the belt as soon as int 29 shows
+# the check, so a missed cylinder stays on the belt, well before its end.
+
+pick_obj = -1
+if socket_open("127.0.0.1", 63352, "pick_grip"):
+  # sends "GET OBJ\n" and reads the "OBJ <n>" reply (0 after 2 s without one)
+  pick_obj = socket_get_var("OBJ", "pick_grip")
+  socket_close("pick_grip")
+end
+write_output_integer_register(28, pick_obj)
+write_output_integer_register(29, read_input_integer_register(27))

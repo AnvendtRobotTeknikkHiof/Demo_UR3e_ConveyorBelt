@@ -1,0 +1,59 @@
+# pick_belt_thread.script - RobotLab pick demo, stage 5 (PolyScope 5.21, UR3e)
+# Put this in a Script node (File) inside BeforeStart, BELOW pick_vencoder.script.
+# The same belt commands as pick_belt_server.script, but in a thread, so the laptop can
+# start and stop the belt while the main program is busy picking.
+#
+# Laptop -> robot (RTDE input registers):
+#   int 25    command: 1 = run forward, 2 = run backward, 3 = stop
+#   int 26    sequence number; a command runs once, when this changes
+#   float 24  conveyor_speed in volts for run commands (limited to 0-2 V here)
+#   float 25  pause in seconds between conveyor_stop Low and the start pulse
+# Robot -> laptop:
+#   int 26    sequence number of the last command carried out
+#
+# conveyor_fwd = DO5, conveyor_bcwd = DO6, conveyor_stop = DO7, conveyor_speed = AO1.
+# The run outputs latch: a short pulse starts the belt and only conveyor_stop stops it.
+
+# Mark the laptop's last pick job as done, so it doesn't run again at program start
+write_output_integer_register(27, read_input_integer_register(27))
+
+thread pick_belt_thread():
+  while True:
+    seq = read_input_integer_register(26)
+    if seq != read_output_integer_register(26):
+      cmd = read_input_integer_register(25)
+      if cmd == 1 or cmd == 2:
+        volts = read_input_float_register(24)
+        if volts < 0.0:
+          volts = 0.0
+        elif volts > 2.0:
+          volts = 2.0
+        end
+        set_standard_analog_out(1, volts / 10.0)
+        set_standard_digital_out(5, False)
+        set_standard_digital_out(6, False)
+        set_standard_digital_out(7, False)
+        start_pause = read_input_float_register(25)
+        if start_pause > 0.0:
+          sleep(start_pause)
+        end
+        if cmd == 1:
+          set_standard_digital_out(5, True)
+        else:
+          set_standard_digital_out(6, True)
+        end
+        sleep(0.3)
+        set_standard_digital_out(5, False)
+        set_standard_digital_out(6, False)
+      elif cmd == 3:
+        set_standard_digital_out(5, False)
+        set_standard_digital_out(6, False)
+        set_standard_digital_out(7, True)
+      end
+      write_output_integer_register(26, seq)
+    else:
+      sleep(0.02)
+    end
+  end
+end
+pick_belt = run pick_belt_thread()

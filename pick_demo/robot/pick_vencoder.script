@@ -1,0 +1,72 @@
+# pick_vencoder.script - RobotLab pick demo, stage 3 (PolyScope 5.21, UR3e)
+# Software encoder: stands in for the slipping encoder wheel until it is fixed.
+# Put this in a Script node (File) inside BeforeStart, BELOW pick_link.script.
+# Remove the node to use the real encoder again; nothing else changes.
+#
+# It takes over encoder 0, so get_conveyor_tick_count(), the published tick (output
+# float 24) and conveyor tracking all follow it, at 1825 ticks/m like the real wheel.
+# While the belt runs it counts at the belt speed the laptop measured:
+#   input float 26  belt speed in m/s (written by the laptop), limited to 0-0.3 here
+# It sees the belt start and stop the way the belt controller does: a rising edge on
+# conveyor_fwd (DO5) or conveyor_bcwd (DO6) while conveyor_stop (DO7) is Low starts
+# it (after 0.17 s, then about 0.4 s to full speed); conveyor_stop High stops it.
+
+encoder_enable_set_tick_count(0, 0)     # encoder 0, 32-bit signed tick count
+
+thread pick_vencoder_thread():
+  tpm = 1825.0          # ticks per metre (Installation -> Conveyor Tracking)
+  accel = 0.3           # m/s^2: full speed (~0.12 m/s at 1 V) in about 0.4 s
+  delay = 0.17          # s from the start pulse until the belt moves (stage 2)
+  dt = get_steptime()
+  ticks = 0
+  frac = 0.0
+  v = 0.0               # modelled belt speed in m/s, + = forward
+  run_dir = 0           # 1 forward, -1 backward, 0 stopped
+  pending = 0
+  countdown = -1.0
+  was_fwd = False
+  was_bwd = False
+  while True:
+    is_fwd = get_standard_digital_out(5)
+    is_bwd = get_standard_digital_out(6)
+    if get_standard_digital_out(7):
+      run_dir = 0
+      countdown = -1.0
+    elif is_fwd and not was_fwd:
+      pending = 1
+      countdown = delay
+    elif is_bwd and not was_bwd:
+      pending = -1
+      countdown = delay
+    end
+    was_fwd = is_fwd
+    was_bwd = is_bwd
+    if countdown >= 0.0:
+      countdown = countdown - dt
+      if countdown < 0.0:
+        run_dir = pending
+      end
+    end
+    speed = read_input_float_register(26)
+    if speed < 0.0:
+      speed = 0.0
+    elif speed > 0.3:
+      speed = 0.3
+    end
+    target = run_dir * speed
+    if v < target - accel * dt:
+      v = v + accel * dt
+    elif v > target + accel * dt:
+      v = v - accel * dt
+    else:
+      v = target
+    end
+    frac = frac + v * dt * tpm
+    whole = floor(frac)
+    ticks = ticks + whole
+    frac = frac - whole
+    encoder_set_tick_count(0, ticks)
+    sync()
+  end
+end
+pick_vencoder = run pick_vencoder_thread()

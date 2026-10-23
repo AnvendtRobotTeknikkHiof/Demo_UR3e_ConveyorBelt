@@ -1,0 +1,26 @@
+# pick_link.script - RobotLab pick demo (PolyScope 5.21, UR3e), stages 0 and up
+# Put this in a Script node (File) as the LAST node inside BeforeStart.
+# The arm does not move.
+#
+# A thread runs every control cycle (2 ms) and writes:
+#   output float register 24 <- conveyor tick count (Installation -> Conveyor Tracking)
+#   output int register 24   <- heartbeat, counts up while the program runs
+#   output int register 25   <- copy of input int register 24 (written by the laptop)
+
+write_output_integer_register(24, 0)
+write_output_integer_register(25, 0)
+# Mark the laptop's last belt command as done, so it doesn't run again when the
+# program starts (see pick_belt_server.script).
+write_output_integer_register(26, read_input_integer_register(26))
+
+thread pick_link_thread():
+  hb = 0
+  while True:
+    write_output_float_register(24, get_conveyor_tick_count())
+    write_output_integer_register(24, hb)
+    write_output_integer_register(25, read_input_integer_register(24))
+    hb = hb + 1
+    sync()
+  end
+end
+pick_link = run pick_link_thread()
