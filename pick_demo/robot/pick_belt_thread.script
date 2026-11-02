@@ -1,5 +1,5 @@
 # pick_belt_thread.script - RobotLab pick demo, stage 5 (PolyScope 5.21, UR3e)
-# Put this in a Script node (File) inside BeforeStart, BELOW pick_vencoder.script.
+# Put this in a Script node (File) inside BeforeStart, BELOW pick_link.script.
 # The same belt commands as pick_belt_server.script, but in a thread, so the laptop can
 # start and stop the belt while the main program is busy picking.
 #

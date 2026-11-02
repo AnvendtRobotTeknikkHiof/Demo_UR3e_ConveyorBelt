@@ -9,8 +9,9 @@ Each pick works like stage 5 (same pick spot and --offset-mm). New in stage 6:
 - One result line per cylinder (PICKED, MISSED, ...) with a running count, also written
   to logs/stage6_jobs_*.csv.
 - The belt stops when S2 no longer sees the cylinder, when the robot reports its grip
-  check, or at the latest when the cylinder is 12 cm past S2 (predicted from the last
-  sensor that saw it, so also when S2 never sees it). If the robot program stops, the
+  check, or at the latest when the cylinder is 12 cm past S2 (counted in encoder ticks
+  from the last sensor that saw it, so also when S2 never sees it). It also stops when
+  the encoder does not count while the belt runs. If the robot program stops, the
   laptop sets conveyor_stop directly.
 - After anything but PICKED the belt stays stopped and the laptop says what to do.
 - --auto: no Enter per cylinder. The belt starts when a cylinder has stood still in front
@@ -44,9 +45,13 @@ OBJ_TEXT = {-1: "the robot could not reach the gripper server", 0: "no answer fr
 SETTLE_S = 2.0            # --auto: the cylinder must stand still in front of S4 this long
 CENTRED_CM = (19, 22)     # --auto: S4 reading with the cylinder in the middle (stage 3: 20-21)
 SEEN_WITHIN_S = 15        # stop the belt if no sensor has seen the cylinder by then
+MIN_TICK_RATE = 20        # ticks/s: slower than this while the belt runs = encoder not counting
+                          # (0.2 V, the slowest speed, gave 47 ticks/s in stage 2)
+ENCODER_GRACE_S = 1.5     # the belt needs up to ~0.9 s to reach full speed after the start
 
 PICKED, MISSED, NO_PICK, NO_CHECK = "PICKED", "MISSED", "NO PICK", "NO GRIP CHECK"
 ROBOT_STOPPED, NO_ANSWER, SENSORS_LOST = "ROBOT STOPPED", "NO ANSWER", "SENSORS LOST"
+ENCODER_DEAD = "ENCODER NOT COUNTING"
 WHAT_TO_DO = {
     MISSED: "The gripper came up empty. Take the cylinder off the belt.",
     NO_PICK: "The robot did not try. Take the cylinder off the belt.",
@@ -58,6 +63,8 @@ WHAT_TO_DO = {
                " Take the cylinder off the belt.",
     SENSORS_LOST: "The IO-Link master did not answer, so the belt stopped at once. Check the"
                   " network cable. Take the cylinder off the belt.",
+    ENCODER_DEAD: "The belt ran but the encoder did not count, so the belt stopped. Look at"
+                  " the encoder wheel (stage2_belt_test.py watch). Take the cylinder off the belt.",
 }
 JOB_COLUMNS = ["cylinder", "clock", "result", "obj", "robot_job", "speed_cm_s", "lead_s",
                "centre_at_start_cm", "belt_stopped_because", "seconds"]
@@ -73,28 +80,23 @@ def run_belt(belt, reader, base, order, pos, volts, offset_mm, reads):
     stop the belt in time. Returns a dict for the report; the belt is stopped."""
     last = order[-1]
     stop_at = pos[last] + (s5.STOP_PAST_S2_CM - s5.RADIUS_CM) / 100   # centre, m
-    guess = s2.belt_speed_guess(volts)
     info = {"job": None, "speed": None, "lead": None, "start": None, "why": None}
     try:
         _, _, values = reader.read()
     except Exception:
         info["why"] = SENSORS_LOST
         return info
-    # A cylinder already standing in front of S4 (--auto) can't be timed there; the
-    # speed is then measured from S3.
+    # A cylinder already standing in front of S4 (--auto) has no enter time there
     blocked = {n: is_blocked(values[n].distance_cm, base[n]) for n in order}
     enter, leave, centre = {}, {}, {}
 
-    belt.set_belt_speed(guess)
-    belt.update()
+    s = belt.update()
     i0 = len(belt.samples)
+    tick0 = s2.tick_of(s)
     belt.run(s2.FORWARD, volts)
     t_start = time.monotonic()
-    # (centre position in m, laptop time) when a sensor last placed the cylinder
-    stood = blocked[order[0]]
-    ref = (pos[order[0]], t_start) if stood else None
-    v = None                  # belt speed measured by the sensors, m/s
-    rough = None              # speed from the belt start, if it stood in front of S4
+    # (centre position in m, tick) when a sensor last placed the cylinder
+    ref = (pos[order[0]], tick0) if blocked[order[0]] else None
     while True:
         try:
             t0, t1, values = reader.read()
@@ -115,26 +117,17 @@ def run_belt(belt, reader, base, order, pos, volts, offset_mm, reads):
             if not blocked[n] and is_blocked(d, base[n]):
                 blocked[n] = True
                 enter[n] = tm
-                if n == last:
-                    ref = (pos[n] - s5.RADIUS_CM / 100, tm)    # S2 sees the front edge
+                if n == last:     # S2 sees the front edge
+                    ref = (pos[n] - s5.RADIUS_CM / 100, s2.tick_at(belt.samples[i0:], tm))
             elif blocked[n] and d is not None and d >= base[n] - s2.CLEAR_WITHIN_CM:
                 blocked[n] = False
                 leave[n] = tm
                 if n not in enter:
-                    continue      # it stood there at the start: no timing
-                centre[n] = (enter[n] + tm) / 2
+                    continue      # it stood there at the start: no centre
+                centre[n] = s2.tick_at(belt.samples[i0:], (enter[n] + tm) / 2)
                 ref = (pos[n], centre[n])
-                timed = [m for m in order if m in centre and m != n]
-                if timed and pos[n] <= pos[s5.TRIGGER]:
-                    v = (pos[n] - pos[timed[0]]) / (centre[n] - centre[timed[0]])
-                    belt.set_belt_speed(v)
-                    info["speed"] = v
-                elif not timed and stood:
-                    # only for the end check until S1 times it (a few % low: start-up)
-                    rough = (pos[n] - pos[order[0]]) / (centre[n] - t_start)
-                    belt.set_belt_speed(rough)
-                if n == s5.TRIGGER and v:
-                    send_job(belt, info, pos[n], centre[n], v, offset_mm)
+                if n == s5.TRIGGER:
+                    send_job(belt, info, pos[n], centre[n], offset_mm)
 
         job = info["job"]
         if last in leave:
@@ -146,10 +139,11 @@ def run_belt(belt, reader, base, order, pos, volts, offset_mm, reads):
         if job is not None and s["output_int_register_27"] == job:
             info["why"] = "the robot has finished"
             break
+        if now - t_start > ENCODER_GRACE_S and s2.tick_rate(belt.samples) < MIN_TICK_RATE:
+            info["why"] = ENCODER_DEAD
+            break
         if ref is not None:
-            # until a speed is measured, assume a faster belt: rough + 25 %, or twice the guess
-            v_end = v or (1.25 * rough if rough else 2 * guess)
-            if ref[0] + v_end * (now - ref[1]) >= stop_at:
+            if ref[0] + (s2.tick_of(s) - ref[1]) / s2.TICKS_PER_M >= stop_at:
                 info["why"] = "the cylinder is near the belt end"
                 break
         elif now - t_start > SEEN_WITHIN_S:
@@ -167,19 +161,16 @@ def run_belt(belt, reader, base, order, pos, volts, offset_mm, reads):
         info["centre_at_start"] = (pos[last] * 100 - s5.RADIUS_CM
                                    - (tick_enter - info["start"]) / s2.TICKS_PER_M * 100)
     if info["job"] is None and "late" not in info and info["why"] not in (ROBOT_STOPPED,
-                                                                         SENSORS_LOST):
+                                                                         SENSORS_LOST,
+                                                                         ENCODER_DEAD):
         info["no_job"] = ("the robot was still busy with the last job" if "busy" in info
-                          else f"{s5.TRIGGER} did not see the whole cylinder"
-                          if s5.TRIGGER not in centre else "no belt speed measured before "
-                          + s5.TRIGGER)
+                          else f"{s5.TRIGGER} did not see the whole cylinder")
     return info
 
 
-def send_job(belt, info, sensor_m, t_centre, v, offset_mm):
-    """The cylinder centre passed sensor_m (m) at t_centre: ask the robot to start
-    following when it is at the pick spot (+ offset). Counted from the newest tick, so it
-    doesn't matter how fast the software encoder counted before; from now on it counts
-    at v (stage 5 counted from the tick at t_centre: the same when the speed was right)."""
+def send_job(belt, info, sensor_m, tick_centre, offset_mm):
+    """The cylinder centre passed sensor_m (m) at tick_centre: ask the robot to start
+    following when it is at the pick spot (+ offset)."""
     belt.update()
     s = belt.samples[-1]
     if s["output_int_register_27"] != belt.job and belt.parked != belt.job:
@@ -187,14 +178,15 @@ def send_job(belt, info, sensor_m, t_centre, v, offset_mm):
         # robot waits above the belt and this job releases it)
         info["busy"] = True
         return
-    here = sensor_m + v * (s["_t"] - t_centre)          # cylinder centre now, m
-    tick_now = s2.tick_of(s)
-    lead = (s5.PICK_CM / 100 + offset_mm / 1000 - here) / v
+    start = tick_centre + (s5.PICK_CM / 100 + offset_mm / 1000 - sensor_m) * s2.TICKS_PER_M
+    rate = s2.tick_rate(belt.samples)
+    info["speed"] = rate / s2.TICKS_PER_M
+    lead = (start - s2.tick_of(s)) / rate if rate > 0 else 0.0
     if lead < s5.MIN_LEAD_S:
         info["late"] = lead
         return
-    info["start"] = tick_now + lead * v * s2.TICKS_PER_M
-    info["job"] = belt.send_job(info["start"])
+    info["start"] = start
+    info["job"] = belt.send_job(start)
     info["lead"] = lead
 
 
@@ -227,7 +219,7 @@ def one_job(belt, reader, base, order, pos, args, reads):
     print(f"  belt stopped: {info['why']}")
 
     obj = None
-    if info["why"] in (ROBOT_STOPPED, SENSORS_LOST):
+    if info["why"] in (ROBOT_STOPPED, SENSORS_LOST, ENCODER_DEAD):
         result = info["why"]
     elif info["job"] is None:
         result = NO_PICK

@@ -47,33 +47,37 @@ belt outputs.
 | The Robotiq gripper loses its activation when the robot is switched off (`STA 0`: Open/Close do nothing). Activate it from the UR+ panel or with the Gripper Activate node | 2026-10-21 |
 | **Stage 4 passed:** `pick_stage4` picks the cylinder from the 178 cm mark and places it on the table (main program: Popup, MoveJ pick_above, MoveL pick, Gripper Close, MoveL pick_above, MoveJ place_above, MoveL place, Gripper Open, MoveL place_above) | stage 4, 2026-10-21 |
 | **Stage 5 works: the robot picks the cylinder from the moving belt** and puts it on the table. Fingers close across the belt, `pick_above` straight above `pick` (fingertips ~2 cm above the cylinder), MoveL 400 mm/s and 1500 mm/s2, gripper 100 %, start 50 mm early (`--offset-mm -50`): grip in the middle | stage 5, 2026-10-21 |
+| **Encoder fixed (2026-11-02); software encoder removed.** The robot follows the real wheel again. The laptop no longer sends a belt speed (input float 26 is unused): every position between sensors is counted in encoder ticks, and the belt stops if the encoder does not count while the belt runs. Still to confirm on the robot: stage 3 (see Status) | 2026-11-02 |
+| **The fixed wheel gives 1676 ticks/m, not 1825.** `calibrate`: 1683, 1672, 1674 (0.6 % spread); `watch` steady at ~296 ticks/s, 0 % standing still. With 1825 the robot started ~3 cm late and followed 9 % too slowly. Changed in `stage2_belt_test.py`; set it in Installation -> Conveyor Tracking and the `track_conveyor_linear` Script nodes too | stage 2 calibrate, 2026-11-02 |
+| **The belt runs 17.6 cm/s at 1 V** (2026-11-02), 2.4x the 7.3 cm/s at which `--offset-mm -50` was tuned: the offset must be tuned again (or the belt run slower) | stage 2 calibrate + stage 7, 2026-11-02 |
 
-## Status and next steps (2026-10-21)
+## Status and next steps (2026-11-02)
 
 Done: stage 0 (link), stage 2 `speed`, `start-pause`, `calibrate`. Stage 1's hands-on
 checks (display, mapping, tape, centreline) are not done yet.
 
 The belt keeps running while the robot picks, so the robot must know where the belt is
-all the time. The encoder wheel slips, so we use a **software encoder** now (stage 3) and
-swap back to the real one when it is fixed.
+all the time. From 2026-10-21 to 2026-11-02 the encoder wheel slipped and a software
+encoder stood in for it; the wheel is fixed now and the real encoder is used again.
 
-Stage 3 (software encoder + prediction) passed on 2026-10-21. Stage 4 passed the same day,
+Stage 3 (then with the software encoder) passed on 2026-10-21. Stage 4 passed the same day,
 and stage 5 picks from the moving belt, tuned to grip in the middle (offset -50).
 On 2026-10-22 the robot program moved to Python (`stage5_robot.py`, Remote mode) and picked
 from the moving belt; stage 6 picked its first cylinder with it. Stage 7 (several
 cylinders on a belt that runs all the time) is written and tested offline only.
 
 Next session:
+0. **Check the fixed encoder** with `pick_stage2` playing (Local mode): `stage2_belt_test.py
+   watch` and `calibrate` passed on 2026-11-02 (1676 ticks/m, now in `TICKS_PER_M`;
+   also set it in Installation -> Conveyor Tracking), then
+   `stage3_predict_test.py` (pass: within 10 mm, encoder 98-102 % of the sensors' speed).
+   Delete the `Script: pick_vencoder.script` node from `pick_stage3` to `pick_stage6` on
+   the pendant if you still use those programs. With the robot program from Python, run
+   `stage5_robot.py start` and then `watch` once more: the ticks must move with the belt.
 1. **Stage 5 repeatability:** `python pick_demo\stage5_pick.py --runs 5`; pass 5 of 5.
    Then the same with the robot program run from Python (`stage5_robot.py`, see Stage 5).
 2. **Stage 6:** tests 3-4 (see Stage 6), then **Stage 7** with several cylinders.
-3. **Encoder fix, for the lab engineer** (the wheel slips on the slack return run):
-   move the wheel to a place where the belt is supported or tight (for example where it
-   wraps round a roller), add a spring that presses it on, put rubber on the rim (O-ring
-   or grip tape), or put the encoder on the axle of the undriven roller. After a fix:
-   remove the `pick_vencoder.script` node, then `watch` (pass: 0 % standing still,
-   forward and `--backward`) and `calibrate` (pass: 3 runs within 1 %).
-4. Optional **stopwatch check** at 1 V: two marks on the frame 1.00 m apart; time a tape
+3. Optional **stopwatch check** at 1 V: two marks on the frame 1.00 m apart; time a tape
    mark on the belt. Expected ~8.4 s (11.9 cm/s).
 
 ## Registers (only 24-47 are used; 0-23 belong to fieldbus/PLC)
@@ -93,7 +97,7 @@ Next session:
 | input int 27 | laptop -> robot | pick job number; a new job starts when it differs from output int 27 (stage 5) |
 | input float 24 | laptop -> robot | belt speed in volts (the robot limits it to 0-2 V) |
 | input float 25 | laptop -> robot | pause between `conveyor_stop` Low and the start pulse (s) |
-| input float 26 | laptop -> robot | belt speed in m/s for the software encoder (stage 3) |
+| input float 26 | laptop -> robot | unused (was the belt speed for the software encoder, removed 2026-11-02) |
 | input float 27 | laptop -> robot | tick at which the robot starts following the belt (stage 5); 1e9 = "parked" (stage 6) |
 
 ---
@@ -261,52 +265,27 @@ Every run is logged in `pick_demo\logs\` (not committed).
 | check | `program: playing, heartbeat moving` |
 | speed | a table row per voltage: ticks/s, start delay, stop distance, stalls. The lowest voltage that starts is the dead zone |
 | start-pause | we know whether "no pause" always starts. If it ever fails, keep the 0.2 s pause |
-| calibrate | the 3 runs agree within 1 %. That is the real ticks/m; compare with 1825 |
+| calibrate | the 3 runs agree within 1 %. That is the real ticks/m; compare with `TICKS_PER_M` (1676) |
 
 Send the printed tables. If `speed` shows stalls, send the CSV file from `logs\` too.
 
 ---
 
-## Stage 3: software encoder and prediction (the arm does not move)
+## Stage 3: encoder and prediction (the arm does not move)
 
-**Goal:** the robot counts ticks itself at the measured belt speed, and from the moment
-the cylinder passes S1 the laptop can say at which tick it reaches a spot further on.
-The pick (stage 5) uses exactly this, with the pick spot instead of S2.
+**Goal:** from the moment the cylinder passes S1 the laptop can say at which tick it
+reaches a spot further on. The pick (stage 5) uses exactly this, with the pick spot
+instead of S2.
 
-How it works: `robot/pick_vencoder.script` takes over encoder 0. It counts at 1825
-ticks/m, like the real wheel, at the speed in input float 26, and sees the belt start and
-stop from the outputs (the same latch rule as the belt controller). The laptop times
-each cylinder from S4 to S3 and S4 to S1 and sends that speed.
-
-### Build the program on the pendant
-
-1. Copy `robot/pick_vencoder.script` to the USB stick and plug it into the pendant.
-2. **Open... -> Program** -> `pick_stage2`, then straight away **Save Program As...**
-   `pick_stage3`.
-3. Tap the `Script: pick_link.script` node inside BeforeStart, then **Advanced -> Script**
-   (the new node goes below it), **File**, **Edit -> Open** -> `pick_vencoder.script` on the
-   USB stick -> **Save As** on the robot next to the others -> close.
-4. **Save**.
-
-```
-Robot Program                     [x] Program Loops Forever
-  BeforeStart
-    Set conveyor_fwd = Low
-    Set conveyor_bcwd = Low
-    Set conveyor_stop = High
-    Wait: 0.5
-    Set conveyor_stop = Low
-    Script: pick_link.script
-    Script: pick_vencoder.script
-  Script: pick_belt_server.script
-```
+The program is `pick_stage2` (nothing new on the pendant). The old `pick_stage3` added
+the software encoder node; if you still have it, delete that node or use `pick_stage2`.
 
 ### Run the tests (Play first, one at a time)
 
 | Command | Belt | Pass when |
 |---|---|---|
-| `python pick_demo\stage2_belt_test.py watch --seconds 10` | **empty** | a steady speed, **no** `STOP` lines (the software encoder has taken over). The number is the start value the laptop sends (about 134 ticks/s at 1 V), not a measurement |
-| `python pick_demo\stage3_predict_test.py` | cylinder, 5 runs | `PASS`: every S2 prediction within 10 mm, encoder 98-102 % of the speed sent |
+| `python pick_demo\stage2_belt_test.py watch --seconds 10` | **empty** | a steady speed, **no** `STOP` lines, forward and with `--backward` |
+| `python pick_demo\stage3_predict_test.py` | cylinder, 5 runs | `PASS`: every S2 prediction within 10 mm, encoder 98-102 % of the sensors' speed |
 
 For each run put the cylinder upright **in the middle of the belt**, before S4 (0-15 cm),
 and stand at the belt end. The test also prints the sensors' nearest-face reading with
@@ -366,7 +345,7 @@ elbow angle, twice a second. Keep it running on the laptop while you teach.
 ```
 Robot Program                      [x] Program Loops Forever
   BeforeStart
-    (as stage 3: belt outputs, pick_link.script, pick_vencoder.script)
+    (as stage 3: belt outputs, pick_link.script)
     Gripper Activate
     Gripper Open
   Popup: put the cylinder on the 178 cm mark
@@ -439,7 +418,7 @@ The laptop stops the belt when S2 no longer sees the cylinder.
 ### Build the program (from `pick_stage4`)
 1. Copy `robot/pick_belt_thread.script` to the USB stick. **Open** `pick_stage4`,
    **Save Program As** `pick_stage5`.
-2. **BeforeStart:** below `pick_vencoder.script` add **Script -> File** `pick_belt_thread.script`.
+2. **BeforeStart:** below `pick_link.script` add **Script -> File** `pick_belt_thread.script`.
 3. **Main program**, four changes (new nodes go below the selected one):
    - Replace the **Popup** with **Basic -> Wait**, "wait until expression":
      `read_input_integer_register(27) != read_output_integer_register(27)`
@@ -447,7 +426,7 @@ The laptop stops the belt when S2 no longer sees the cylinder.
      `read_output_float_register(24) >= read_input_float_register(27)` (the tick count
      that `pick_link.script` publishes; PolyScope's expression editor rejects the old
      name `get_conveyor_tick_count`), then
-     **Script** (Line) `track_conveyor_linear(p[-0.0247, 0.9997, -0.0038, 0, 0, 0], 1825)`
+     **Script** (Line) `track_conveyor_linear(p[-0.0247, 0.9997, -0.0038, 0, 0, 0], 1676)`
    - Below the second `MoveL pick_above`: **Script** (Line) `stop_conveyor_tracking()`
    - At the very end: **Script** (Line)
      `write_output_integer_register(27, read_input_integer_register(27))`
@@ -458,14 +437,14 @@ The laptop stops the belt when S2 no longer sees the cylinder.
 ```
 Robot Program                      [x] Program Loops Forever
   BeforeStart
-    (as stage 4) ... Script: pick_vencoder.script
+    (as stage 4) ... Script: pick_link.script
     Script: pick_belt_thread.script
     Gripper Activate
     Gripper Open
   Wait until  read_input_integer_register(27) != read_output_integer_register(27)
   MoveJ  pick_above
   Wait until  read_output_float_register(24) >= read_input_float_register(27)
-  Script track_conveyor_linear(p[-0.0247, 0.9997, -0.0038, 0, 0, 0], 1825)
+  Script track_conveyor_linear(p[-0.0247, 0.9997, -0.0038, 0, 0, 0], 1676)
   MoveL  pick
   Gripper Close
   MoveL  pick_above
@@ -539,7 +518,7 @@ RTDE worked when the program stopped.
 `stage5_robot.py` builds the whole stage 5 robot program as one URScript program and
 sends it to the robot (port 30002); no PolyScope program is needed. It does what
 `pick_stage5` does, with the same poses, moves and gripper speed, uses the same
-`pick_vencoder.script` and `pick_belt_thread.script`, and also reports the grip for
+`pick_belt_thread.script`, and also reports the grip for
 stage 6. It drives the gripper through the Robotiq server (port 63352) instead of the
 Gripper nodes, and moves to joint positions, so the active TCP doesn't matter.
 The robot only runs programs from the network in **Remote mode**.
@@ -619,12 +598,11 @@ never lets a cylinder reach the belt end.
   has stood still for 2 s in front of S4, in the middle of the belt (S4 reads 19-22 cm),
   and S3, S1 and S2 see nothing. That is where robot #1 must put it (centre 17-22 cm from
   the belt start, in the middle). A hand in front of S4 or a cylinder off the middle does
-  not start the belt. The speed is then timed from S3 to S1.
+  not start the belt.
 - A belt that runs all the time with several cylinders on it: Stage 7.
 - A job is only sent when the robot has finished the last one (or waits for a parked one).
-- The start tick is now counted from the newest tick when the job is sent (stage 5 counted
-  from the tick when the cylinder passed S1: the same when the speed was right; `--auto`
-  only knows the speed at S1).
+- The start tick is counted from the tick when the cylinder's centre passed S1, as in
+  stage 5. The belt-end stop counts ticks from the last sensor that saw the cylinder.
 - If the laptop gives up on a job (sensors lost, Ctrl+C) it "parks" it (start tick 1e9): a
   robot still waiting above the belt keeps waiting instead of moving off, and the next job
   releases it.
@@ -646,7 +624,7 @@ Robot Program                      [x] Program Loops Forever
   Wait until  read_input_integer_register(27) != read_output_integer_register(27)
   MoveJ  pick_above
   Wait until  read_output_float_register(24) >= read_input_float_register(27)
-  Script track_conveyor_linear(p[-0.0247, 0.9997, -0.0038, 0, 0, 0], 1825)
+  Script track_conveyor_linear(p[-0.0247, 0.9997, -0.0038, 0, 0, 0], 1676)
   MoveL  pick
   Gripper Close
   MoveL  pick_above
@@ -700,18 +678,14 @@ the next. Needs the robot program from Python (`stage5_robot.py start`).
   A new job can then follow 0.5 s before the pick spot (2.5 s if the robot is somewhere
   else, e.g. with a PolyScope program).
 - **Every cylinder is followed** from S3 to S1 to S2; S4 is left out because hands are
-  near it while cylinders are put on. Its time from S3 to S1 gives the belt speed, and
-  each new sighting is matched to the cylinder predicted nearest that sensor.
+  near it while cylinders are put on. Between sensors its position is counted in encoder
+  ticks, and each new sighting is matched to the cylinder predicted nearest that sensor.
 - **One job at a time.** When S1 has seen a cylinder its start tick is planned (as in
   stage 6) and queued. The job goes to the robot as soon as the robot is free and back
   above the belt, if there is at least 0.5 s left; otherwise the cylinder is **skipped**.
   The robot needs about 7 s from starting to follow one cylinder until it is back above
   the belt, so **keep cylinders 8-9 s apart** (about 60 cm at 7.3 cm/s, more on a faster
   belt); the laptop prints the gap in cm and seconds.
-- Until the first belt speed is measured (S3 -> S1), a sensor reading belongs to the oldest
-  cylinder that sensor hasn't seen yet: a guessed speed can be far off (11.9 cm/s on
-  2026-10-16 against a guess of 7.3; in the simulation that made S1 take the first cylinder
-  for a new one, and it fell off the belt end before this was fixed).
 - **A cylinder is skipped** when S1 saw it in fewer than 3 readings or further than 25 cm
   away: it is off the middle of the belt. (2026-10-22, stage 6 with the belt running: S4,
   S3 read 25 cm and S1 27 cm in a single reading, 4-5 cm off the middle; S1's timing was
@@ -748,7 +722,6 @@ with 8 s gaps: all picked. The front edge never got past 197 cm.
 | # | Build | Pass test |
 |---|---|---|
 | later | Robot #1 puts the cylinder in front of S4 (`stage6_loop.py --auto` waits for it); it must not do so while S3, S1 or S2 sees a cylinder | 15 min with robot #1, nobody at the belt |
-| later | Real encoder fixed: remove the `pick_vencoder.script` node, rerun `watch` and `calibrate` | 0 % standing still; 3 runs within 1 % |
 
 Gripper (stage 4): Robotiq 2F on the wrist connector (RS-485). The Robotiq URCap
 1.8.7 on the robot accepts text commands on port 63352 (`SET POS 255 SPE 128 FOR 100 GTO 1`,

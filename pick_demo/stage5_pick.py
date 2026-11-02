@@ -1,9 +1,9 @@
 """
 Stage 5: the robot picks the cylinder from the moving belt.
 
-The laptop runs the belt, times the cylinder from S4 to S3 and to S1 (the software
-encoder counts at that speed) and, as soon as S1 has seen it, sends the robot a pick job:
-the tick at which the cylinder's centre is at the pick spot (178 cm). The robot waits
+The laptop runs the belt and, as soon as S1 has seen the cylinder, sends the robot a pick
+job: the tick at which the cylinder's centre is at the pick spot (178 cm), counted from
+the tick when its centre passed S1. The robot waits
 above the spot, starts following the belt at that tick, goes down, grips, lifts, stops
 following and puts the cylinder on the table. The laptop stops the belt when S2 no longer
 sees the cylinder (lifted away, or gone past if the pick missed).
@@ -46,7 +46,6 @@ def run_once(belt, reader, base, order, pos, volts, offset_mm, reads):
         if name == first or first not in centre or name not in (order[1], TRIGGER):
             return
         v = (pos[name] - pos[first]) / (centre[name] - centre[first])
-        belt.set_belt_speed(v)
         info["speed"] = v
         if name != TRIGGER:
             return
@@ -61,7 +60,6 @@ def run_once(belt, reader, base, order, pos, volts, offset_mm, reads):
         info["lead"] = lead
         info["start"] = start
 
-    belt.set_belt_speed(s2.belt_speed_guess(volts))
     s2.one_pass(belt, reader, base, order, pos, volts, reads, on_leave,
                 stop_past_cm=STOP_PAST_S2_CM)
 

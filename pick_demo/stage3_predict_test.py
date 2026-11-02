@@ -1,11 +1,10 @@
 """
-Stage 3: software encoder and prediction. The arm does not move.
+Stage 3: encoder and prediction. The arm does not move.
 
-The encoder wheel slips, so the robot program counts ticks itself
-(robot/pick_vencoder.script) at the belt speed the laptop measures for each cylinder:
-the time it takes from S4 to S3, and then from S4 to S1. This test checks the whole
-timing chain the pick will use: when the cylinder has passed S1, the laptop predicts
-the tick at which it reaches S2, and compares with the tick when S2 really sees it.
+This test checks the whole chain the pick will use: when the cylinder has passed S1, the
+laptop predicts the tick at which it reaches S2, and compares with the tick when S2
+really sees it. It also compares the encoder speed with the speed the sensors measure
+(S4 -> S1), which checks TICKS_PER_M.
 
     python pick_demo\\stage3_predict_test.py                     5 runs at 1.0 V
     python pick_demo\\stage3_predict_test.py --volts 0.5 --runs 10
@@ -20,7 +19,7 @@ from iolink_sensors import SENSORS, SensorReader, measure_baseline
 
 TRIGGER, CHECK = "S1", "S2"    # the pick is planned from S1; S2 checks the prediction
 PASS_MM = 10                   # largest allowed prediction error
-PASS_RATIO = 0.02              # software encoder must count within 2 % of the speed sent
+PASS_RATIO = 0.02              # encoder speed must be within 2 % of the sensors' speed
 
 
 def run_once(belt, reader, base, order, pos, volts, reads):
@@ -29,14 +28,10 @@ def run_once(belt, reader, base, order, pos, volts, reads):
     centre, speeds = {}, {}
 
     def on_leave(name, t_enter, t_leave):
-        # as soon as a sensor has seen the whole cylinder, update the speed the robot counts with
         centre[name] = (t_enter + t_leave) / 2
-        if name != first and first in centre and name in (order[1], TRIGGER):
-            v = (pos[name] - pos[first]) / (centre[name] - centre[first])
-            belt.set_belt_speed(v)
-            speeds[name] = v
+        if name != first and first in centre and name == TRIGGER:
+            speeds[name] = (pos[name] - pos[first]) / (centre[name] - centre[first])
 
-    belt.set_belt_speed(s2.belt_speed_guess(volts))
     crossings = s2.one_pass(belt, reader, base, order, pos, volts, reads, on_leave)
     if not crossings or TRIGGER not in crossings or CHECK not in crossings \
             or TRIGGER not in speeds:
@@ -50,9 +45,9 @@ def run_once(belt, reader, base, order, pos, volts, reads):
     ratio = (c["tick"] - t["tick"]) / (c["t"] - t["t"]) / (v * s2.TICKS_PER_M)
     r = {"speed": v, "error_mm": error_mm, "ratio": ratio,
          "nearest": {n: crossings[n]["nearest"] for n in order if n in crossings}}
-    print(f"  speed {first} -> {TRIGGER}: {v * 100:.2f} cm/s (sent to the robot)")
+    print(f"  speed {first} -> {TRIGGER}: {v * 100:.2f} cm/s (sensors)")
     print(f"  {CHECK} predicted from {TRIGGER}: error {error_mm:+.1f} mm")
-    print(f"  software encoder counted {ratio * 100:.1f} % of the speed sent")
+    print(f"  encoder {TRIGGER} -> {CHECK}: {ratio * 100:.1f} % of the sensors' speed")
     print("  nearest face (cylinder centred): "
           + ", ".join(f"{n} {d} cm" for n, d in r["nearest"].items()))
     return r
@@ -72,7 +67,7 @@ def main():
     reads, results = [], []
     try:
         if not belt.program_running():
-            raise SystemExit("The robot program is not running. Load pick_stage3 and press Play.")
+            raise SystemExit("The robot program is not running. Load pick_stage2 and press Play.")
         belt.stop()
         belt.wait_until_still()
         print("Measuring the empty belt for 2 s (keep it empty) ...")
@@ -115,10 +110,10 @@ def main():
         print(f"belt speed: {min(speeds):.2f} - {max(speeds):.2f} cm/s")
         print(f"prediction error at {CHECK}: " + ", ".join(f"{e:+.1f}" for e in errors)
               + f" mm  (worst {worst:.1f} mm)")
-        print(f"software encoder: {min(ratios) * 100:.1f} - {max(ratios) * 100:.1f} % of the speed sent")
+        print(f"encoder: {min(ratios) * 100:.1f} - {max(ratios) * 100:.1f} % of the sensors' speed")
         if max(abs(x - 1) for x in ratios) > PASS_RATIO:
-            print("-> The robot is not counting at the speed we sent. Is pick_vencoder.script"
-                  " in BeforeStart, and does the program run pick_stage3?")
+            print("-> The encoder does not count the distance the sensors see. Does the wheel"
+                  " slip? Run stage2_belt_test.py watch and calibrate, and check TICKS_PER_M.")
         elif worst <= PASS_MM:
             print(f"PASS: every prediction within {PASS_MM} mm.")
         else:

@@ -25,7 +25,7 @@ import time
 from iolink_sensors import SENSORS, SensorReader, measure_baseline
 from rtde_link import PROGRAM_STATES, ROBOT_IP, RTDELink
 
-TICKS_PER_M = 1825.0      # Installation -> Conveyor Tracking; "calibrate" checks it
+TICKS_PER_M = 1676.0   # "calibrate" 2026-11-02, fixed wheel: 1683, 1672, 1674 (was 1825)
 FORWARD, BACKWARD, STOP = 1, 2, 3
 PLAYING = 2               # runtime_state
 FWD_BIT, BWD_BIT, STOP_BIT = 5, 6, 7
@@ -35,7 +35,7 @@ BLOCKED_BELOW_CM = 5      # object present: this much closer than the empty belt
 CLEAR_WITHIN_CM = 2       # object gone: back within this of the empty belt
 STOP_PAST_S2_CM = 8       # calibrate: stop at the latest when the object is this far past S2
 RUN_S = 6.0               # speed: seconds per run
-PARKED_TICK = 1e9         # a start tick the software encoder never reaches (~85 days at 1 V)
+PARKED_TICK = 1e9         # a start tick the encoder never reaches (~85 days at 1 V)
 
 OUTPUTS = ["timestamp", "runtime_state", "actual_digital_output_bits", "standard_analog_output1",
            "output_int_register_24", "output_int_register_26", "output_double_register_24",
@@ -46,18 +46,9 @@ OUTPUTS = ["timestamp", "runtime_state", "actual_digital_output_bits", "standard
            "actual_TCP_pose"]              # where the gripper is (logged)
 INPUTS = ["input_int_register_25", "input_int_register_26",
           "input_double_register_24", "input_double_register_25",
-          "input_double_register_26",      # belt speed (m/s) for the software encoder
           "input_int_register_27",         # pick job number (stage 5)
           "input_double_register_27"]      # tick at which the robot starts following the belt
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-
-
-def belt_speed_guess(volts):
-    """Belt speed in m/s before a cylinder has been timed. At 1.0 V the sensors measured
-    11.9 cm/s on 2026-10-16 but 7.3 cm/s on 2026-10-21, so every cylinder is timed and
-    this is only a starting value (the latest measurement). The shape over voltage comes
-    from the encoder while it rolled (31 + 105 x V ticks/s)."""
-    return 0.0733 * (31 + 105 * volts) / 136
 
 
 def tick_of(s):
@@ -85,6 +76,18 @@ def tick_at(samples, t):
     return tick_of(s0) + f * (tick_of(s1) - tick_of(s0))
 
 
+def tick_rate(samples, window=0.5):
+    """Encoder speed in ticks/s over the last `window` seconds of samples (0 if too few)."""
+    if len(samples) < 2:
+        return 0.0
+    newest = samples[-1]
+    for s in reversed(samples):
+        if newest["timestamp"] - s["timestamp"] >= window:
+            break
+    dt = newest["timestamp"] - s["timestamp"]
+    return (tick_of(newest) - tick_of(s)) / dt if dt > 0 else 0.0
+
+
 class Belt:
     """Belt commands through the robot program, and a log of every RTDE sample."""
 
@@ -96,7 +99,6 @@ class Belt:
         self.job = s["output_int_register_27"]     # last pick job the robot finished
         self.moved = False
         self.parked = None        # last job given up with park_job()
-        self.belt_speed = None    # m/s for the software encoder; None = guess from volts
         self._sent = False
 
     def _send(self, **values):
@@ -122,11 +124,6 @@ class Belt:
         s = self.link.latest()
         return s["runtime_state"] == PLAYING and s["output_int_register_24"] != before
 
-    def set_belt_speed(self, m_per_s):
-        """Tell the software encoder how fast the belt runs (no belt command)."""
-        self.belt_speed = m_per_s
-        self._send(input_int_register_26=self.seq, input_double_register_26=float(m_per_s))
-
     def send_job(self, start_tick):
         """Stage 5: ask the robot to pick, following the belt from start_tick.
         Returns the job number; the robot copies it to output int 27 when done."""
@@ -144,13 +141,9 @@ class Belt:
 
     def command(self, cmd, volts=0.0, pause=0.0, timeout=3.0):
         self.seq += 1
-        speed = self.belt_speed
-        if speed is None:
-            speed = belt_speed_guess(volts) if cmd in (FORWARD, BACKWARD) else 0.0
         self._send(input_int_register_25=cmd, input_int_register_26=self.seq,
                    input_double_register_24=float(volts),
-                   input_double_register_25=float(pause),
-                   input_double_register_26=float(speed))
+                   input_double_register_25=float(pause))
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             s = self.update()

@@ -4,8 +4,7 @@ Stage 5 robot program from Python, instead of the PolyScope program pick_stage5.
 The laptop builds one URScript program and sends it to the robot (port 30002). It does
 what pick_stage5 did:
   start  stop the belt, activate and open the gripper, start the threads: tick and
-         heartbeat to the laptop, software encoder (robot/pick_vencoder.script), belt
-         commands (robot/pick_belt_thread.script)
+         heartbeat to the laptop, belt commands (robot/pick_belt_thread.script)
   loop   wait for a pick job -> above the pick spot -> wait for the start tick -> follow
          the belt -> down, grip, up -> stop following -> on the table -> back above the
          pick spot -> job done
@@ -93,7 +92,6 @@ PROGRAM = """def pick_stage5():
   grip_set("FOR", {grip_force})
   gripper(0)
 
-{vencoder}
   # tick and heartbeat to the laptop (as pick_link.script)
   write_output_integer_register(24, 0)
   write_output_integer_register(26, read_input_integer_register(26))
@@ -165,7 +163,7 @@ def build_program(poses):
         payload = f"set_payload({p['mass']:.3f}, [{', '.join(f'{c:.4f}' for c in p['cog'])}])"
     program = PROGRAM.format(
         payload=payload, grip_speed=GRIP_SPEED, grip_force=GRIP_FORCE,
-        vencoder=script("pick_vencoder.script"), belt_thread=script("pick_belt_thread.script"),
+        belt_thread=script("pick_belt_thread.script"),
         belt_direction=BELT_DIRECTION, ticks_per_m=s2.TICKS_PER_M,
         joint_a=JOINT_A, joint_v=JOINT_V, pick_a=PICK_A, pick_v=PICK_V, move_a=MOVE_A,
         move_v=MOVE_V, **{name: joints(poses[name]["q"]) for name in POSE_NAMES})

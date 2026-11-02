@@ -19,7 +19,7 @@ import time
 
 from rtde_link import PROGRAM_STATES, ROBOT_IP, RTDELink
 
-TICKS_PER_M = 1825.0   # Installation -> Conveyor Tracking (not yet checked with a tape measure)
+TICKS_PER_M = 1676.0   # as stage2_belt_test.py ("calibrate" 2026-11-02)
 
 OUTPUTS = ["timestamp", "runtime_state", "actual_digital_output_bits", "standard_analog_output1",
            "input_int_register_24", "output_int_register_24", "output_int_register_25",

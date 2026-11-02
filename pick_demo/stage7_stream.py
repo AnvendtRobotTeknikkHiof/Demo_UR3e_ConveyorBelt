@@ -8,7 +8,7 @@ the table and goes back above the belt, ready for the next one.
 How it works (each pick is the stage 6 pick, with the robot program from stage5_robot.py,
 which waits above the pick spot between jobs):
 - Every cylinder is followed from S3 to S1 to S2 (S4 is left out: hands are near it while
-  you put cylinders on). Its time from S3 to S1 gives the belt speed.
+  you put cylinders on). Between sensors its position is counted in encoder ticks.
 - When S1 has seen a cylinder, the laptop works out its start tick and queues it. The job
   goes to the robot as soon as the robot is free and waiting above the belt, if there is
   at least 0.5 s left; otherwise the cylinder is skipped (too close to the one before).
@@ -16,8 +16,8 @@ which waits above the pick spot between jobs):
   (2026-10-22: 4-5 cm off the middle, S1 saw it in one reading, the robot came 5 cm late).
 - The grip check (output int 28/29) tells when the robot holds a cylinder.
 - The belt stops when a cylinder that the robot doesn't hold would come 12 cm past S2
-  (predicted from the last sensor that saw it), when the robot program stops, or when
-  the IO-Link master doesn't answer. Then take every cylinder off the belt, press Enter.
+  (counted from the last sensor that saw it), when the robot program stops, when the
+  encoder does not count, or when the IO-Link master doesn't answer. Then take every cylinder off the belt, press Enter.
 
     python pick_demo\\stage7_stream.py                15 minutes
     python pick_demo\\stage7_stream.py --minutes 3
@@ -50,9 +50,10 @@ class Cylinder:
 
     def __init__(self, number):
         self.number = number
-        self.seen = {}            # sensor -> time (centre passing, or front edge for S2)
-        self.ref = None           # (centre position in m, laptop time) of the last sighting
+        self.seen = {}            # sensor -> tick (centre passing, or front edge for S2)
+        self.ref = None           # (centre position in m, tick) of the last sighting
         self.gap_cm = None        # distance to the cylinder before, at S3
+        self.speed = None         # belt speed when S1 saw it, m/s (for the log)
         self.start = None         # tick at which the robot starts following
         self.job = None
         self.held = False         # the robot's grip check says it holds it
@@ -62,8 +63,8 @@ class Cylinder:
         self.tick_s2 = None       # tick when S2 saw its front edge
         self.reported = False
 
-    def where(self, t, v):
-        return self.ref[0] + v * (t - self.ref[1])
+    def where(self, tick):
+        return self.ref[0] + (tick - self.ref[1]) / s2.TICKS_PER_M
 
 
 class Stream:
@@ -73,8 +74,6 @@ class Stream:
         self.belt, self.reader, self.base, self.args, self.out = belt, reader, base, args, out
         self.pos = {n: p for n, _, p in SENSORS}
         self.stop_at = self.pos["S2"] + (s5.STOP_PAST_S2_CM - s5.RADIUS_CM) / 100
-        self.guess = s2.belt_speed_guess(args.volts)
-        self.v = None             # belt speed measured S3 -> S1, m/s
         self.count = 0            # cylinders seen
         self.ready_q = load_pick_above()
         self.reads = []
@@ -86,8 +85,8 @@ class Stream:
         self.on_belt, self.queue, self.active = [], [], None
         self.blocked = {n: False for n in TRACKED}
         self.t_in, self.readings, self.nearest = {}, {}, {}
-        self.belt.set_belt_speed(self.v or self.guess)
         self.belt.run(s2.FORWARD, self.args.volts)
+        self.t_run = time.monotonic()
         why = None
         while why is None:
             why = self.step(end)
@@ -132,11 +131,10 @@ class Stream:
                         self.nearest[n] = min(self.nearest[n] or d, d)
         self.robot_events(s)
         self.send_next(s)
+        if now - self.t_run > s6.ENCODER_GRACE_S and s2.tick_rate(self.belt.samples) < s6.MIN_TICK_RATE:
+            return s6.ENCODER_DEAD
         for c in self.on_belt:
-            # until a speed is measured assume a faster belt: 25 % before S1 (more would
-            # stop it before S1 sees it), twice the guess after it (only 12 cm left)
-            v_end = self.v or (2 if c.ref and c.ref[0] > self.pos["S1"] else 1.25) * self.guess
-            if c.ref and c.where(now, v_end) >= self.stop_at:
+            if c.ref and c.where(s2.tick_of(s)) >= self.stop_at:
                 return f"cylinder {c.number} is near the belt end ({c.skip or 'not picked'})"
         if (now > end or (self.args.jobs and self.count >= self.args.jobs)) \
                 and not self.on_belt and self.active is None:
@@ -145,15 +143,15 @@ class Stream:
 
     # ---- sensors ----
 
-    def match(self, n, t, at_m):
-        """The cylinder on the belt, not yet seen by n, predicted nearest at_m at time t.
-        Before the belt speed is measured the prediction can be far off (11.9 cm/s on
-        2026-10-16 against a guess of 7.3), so then it is simply the oldest one."""
-        waiting = [c for c in self.on_belt if n not in c.seen and c.ref]
-        if self.v is None:
-            return waiting[0] if waiting else None
-        best = [c for c in waiting if abs(c.where(t, self.v) - at_m) < MATCH_M]
-        return min(best, key=lambda c: abs(c.where(t, self.v) - at_m)) if best else None
+    def tick(self, t):
+        """Tick count at laptop time t (a sensor reading from the last couple of seconds)."""
+        return s2.tick_at(self.belt.samples[-300:], t)
+
+    def match(self, n, tick, at_m):
+        """The cylinder on the belt, not yet seen by n, predicted nearest at_m at this tick."""
+        best = [c for c in self.on_belt
+                if n not in c.seen and c.ref and abs(c.where(tick) - at_m) < MATCH_M]
+        return min(best, key=lambda c: abs(c.where(tick) - at_m)) if best else None
 
     def new_cylinder(self):
         self.count += 1
@@ -163,53 +161,48 @@ class Stream:
 
     def passed(self, n, t):
         """The centre of a cylinder passed S3 or S1 at time t."""
-        c = self.match(n, t, self.pos[n])
+        tick = self.tick(t)
+        c = self.match(n, tick, self.pos[n])
         if c is None:
             if n == "S3" and self.args.jobs and self.count >= self.args.jobs:
                 print(f"  (a cylinder after the last of {self.args.jobs} passed S3: take it off)")
             c = self.new_cylinder()
             if n == "S3" and len(self.on_belt) > 1:
-                before = self.on_belt[-2]
-                c.gap_cm = (before.where(t, self.v or self.guess) - self.pos["S3"]) * 100
-            gap = (f", {c.gap_cm:.0f} cm ({c.gap_cm / 100 / (self.v or self.guess):.1f} s)"
-                   " after the one before" if c.gap_cm else "")
+                c.gap_cm = (self.on_belt[-2].where(tick) - self.pos["S3"]) * 100
+            gap = f", {c.gap_cm:.0f} cm after the one before" if c.gap_cm else ""
+            rate = s2.tick_rate(self.belt.samples)
+            if c.gap_cm and rate > 0:
+                gap += f" ({c.gap_cm / 100 * s2.TICKS_PER_M / rate:.1f} s)"
             print(f"\n  Cylinder {c.number} seen by {n}{gap}")
-        c.seen[n] = t
-        c.ref = (self.pos[n], t)
+        c.seen[n] = tick
+        c.ref = (self.pos[n], tick)
         if n == "S3" and self.nearest[n] and self.nearest[n] > MAX_NEAREST_CM:
             print(f"  Cylinder {c.number}: {self.nearest[n]} cm at S3, off the middle of the belt")
         if n != "S1":
             return
-        if "S3" in c.seen:
-            self.v = (self.pos["S1"] - self.pos["S3"]) / (t - c.seen["S3"])
-            self.belt.set_belt_speed(self.v)
-        if self.v is None:
-            c.skip = "no belt speed yet (S3 did not see it)"
-        elif self.readings["S1"] < MIN_READINGS or (self.nearest["S1"] or 99) > MAX_NEAREST_CM:
+        c.speed = s2.tick_rate(self.belt.samples) / s2.TICKS_PER_M
+        if self.readings["S1"] < MIN_READINGS or (self.nearest["S1"] or 99) > MAX_NEAREST_CM:
             c.skip = (f"S1 saw it badly ({self.readings['S1']} reading(s), nearest"
                       f" {self.nearest['S1']} cm): off the middle of the belt?")
-        if c.skip:
             print(f"  Cylinder {c.number} will not be picked: {c.skip}")
             return
-        self.belt.update()
-        s = self.belt.samples[-1]
-        here = self.pos["S1"] + self.v * (s["_t"] - t)
-        c.start = s2.tick_of(s) + (s5.PICK_CM / 100 + self.args.offset_mm / 1000 - here) \
+        c.start = tick + (s5.PICK_CM / 100 + self.args.offset_mm / 1000 - self.pos["S1"]) \
             * s2.TICKS_PER_M
         self.queue.append(c)
 
     def at_s2(self, t):
         """S2 sees the front edge of a cylinder (its centre is 3 cm before S2)."""
         front = self.pos["S2"] - s5.RADIUS_CM / 100
-        c = self.match("S2", t, front)
+        tick = self.tick(t)
+        c = self.match("S2", tick, front)
         if c is None:
             if self.active is not None:
                 return        # the gripper or the cylinder it is lifting, not a new object
             c = self.new_cylinder()
             c.skip = "unknown object at S2"
-        c.seen["S2"] = t
-        c.ref = (front, t)
-        c.tick_s2 = s2.tick_at(self.belt.samples[-300:], t)
+        c.seen["S2"] = tick
+        c.ref = (front, tick)
+        c.tick_s2 = tick
 
     # ---- robot ----
 
@@ -234,7 +227,8 @@ class Stream:
             return
         c = self.queue.pop(0)
         ready = self.ready_q and max(abs(a - b) for a, b in zip(s["actual_q"], self.ready_q)) < 0.02
-        lead = (c.start - s2.tick_of(s)) / ((self.v or self.guess) * s2.TICKS_PER_M)
+        rate = s2.tick_rate(self.belt.samples)
+        lead = (c.start - s2.tick_of(s)) / rate if rate > 0 else 0.0
         if lead < (MIN_LEAD_S if ready else MIN_LEAD_AWAY_S):
             c.skip = f"the robot was free {-lead:.1f} s too late: too close to the one before" \
                 if lead < 0 else "the robot was free too late: too close to the one before"
@@ -254,7 +248,7 @@ class Stream:
         if c.start is not None and c.tick_s2 is not None:
             centre = (self.pos["S2"] * 100 - s5.RADIUS_CM
                       - (c.tick_s2 - c.start) / s2.TICKS_PER_M * 100)
-        self.out(c, result, why, centre, self.v)
+        self.out(c, result, why, centre, c.speed)
 
 
 def load_pick_above():
