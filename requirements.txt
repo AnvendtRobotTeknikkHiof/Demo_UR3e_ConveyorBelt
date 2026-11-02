@@ -1,0 +1,2 @@
+# UR's official RTDE client (pip package "UrRtde", module "rtde"); not on PyPI under a plain name
+UrRtde @ git+https://github.com/UniversalRobots/RTDE_Python_Client_Library.git@main
