@@ -72,7 +72,9 @@ def station2():
 
   # ---- jobs ----
   def belt_to_board(n):
-    # wait above the belt for the start tick, follow the belt, grip, lift
+    # open (a miss leaves it closed), wait above the belt for the start tick,
+    # follow the belt, grip, lift
+    gripper(0)
     while encoder_get_tick_count(0) < read_input_float_register(27):
       sync()
     end
@@ -87,6 +89,7 @@ def station2():
     movej({pick_above}, a={joint_a}, v={joint_v})
   end
   def board_to_omron(n, m):
+    gripper(0)
     s = board(n)
     movej(up(s), a={joint_a}, v={joint_v})
     movel(s, a={move_a}, v={move_v})
@@ -108,7 +111,12 @@ def station2():
     return 0
   end
 
-  # ---- start: belt stopped, gripper active and open ----
+  # ---- start: encoder set up, belt stopped, gripper active and open ----
+  # A PolyScope program gets the encoder from Installation -> Conveyor Tracking; this one
+  # must set it up itself, or encoder 0 does not count
+  encoder_enable_pulse_decode(0, {encoder_type}, {encoder_a}, {encoder_b})
+  # conveyor_speed (analog out 1) must be in voltage mode: set it in Installation ->
+  # I/O Setup (a domain call here made the robot drop the program unread, 2026-11-03)
   set_standard_digital_out(5, False)        # conveyor_fwd
   set_standard_digital_out(6, False)        # conveyor_bcwd
   set_standard_digital_out(7, True)         # conveyor_stop
@@ -161,11 +169,15 @@ def station2():
           set_standard_digital_out(5, False)
           set_standard_digital_out(6, False)
           set_standard_digital_out(7, False)
-          pause = read_input_float_register(25)
-          if pause > 0.0:
-            sleep(pause)
+          start_pause = read_input_float_register(25)   # "pause" is a reserved word
+          if start_pause > 0.0:
+            sleep(start_pause)
           end
-          set_standard_digital_out(cmd + 4, True)   # 5 forward, 6 backward
+          if cmd == 1:
+            set_standard_digital_out(5, True)
+          else:
+            set_standard_digital_out(6, True)
+          end
           sleep(0.3)
           set_standard_digital_out(5, False)
           set_standard_digital_out(6, False)

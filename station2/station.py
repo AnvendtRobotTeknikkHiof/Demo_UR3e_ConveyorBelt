@@ -60,7 +60,8 @@ class Link:
         self.state = self.con.receive()
         self.ticks = deque(maxlen=250)
         self.alive = True
-        threading.Thread(target=self._receive, daemon=True).start()
+        self.thread = threading.Thread(target=self._receive, daemon=True)
+        self.thread.start()
 
     def _receive(self):
         while self.alive:
@@ -95,6 +96,7 @@ class Link:
 
     def close(self):
         self.alive = False
+        self.thread.join(timeout=2)   # let the receive thread end before the socket closes
         self.con.disconnect()
 
 
@@ -128,6 +130,7 @@ class Station2:
             time.sleep(1.0)
         with socket.create_connection((config.ROBOT_IP, 30002), timeout=3) as sock:
             sock.sendall(build_program().encode())
+            time.sleep(0.5)       # closed at once, the robot may drop the program unread
         end, last = time.monotonic() + 15, None
         while time.monotonic() < end:
             time.sleep(0.2)
@@ -145,9 +148,12 @@ class Station2:
     def check_running(self):
         if not self.link.alive:
             raise StationError("Lost the RTDE connection to the robot. Stop the belt on the pendant.")
-        if self.link.state.runtime_state != PLAYING:
+        s = self.link.state
+        if s.runtime_state != PLAYING:
             self.stop_belt_directly()
-            raise StationError("The robot program stopped (protective stop?). Belt stopped.")
+            why = ("a protective stop: read the pendant, Unlock" if s.safety_mode != SAFETY_NORMAL
+                   else "an error in the program: look at the Log tab on the pendant")
+            raise StationError(f"The robot program stopped, {why}. Belt stopped.")
 
     # ---- belt ----
 
@@ -208,7 +214,7 @@ class Station2:
                     if readings < 3 or nearest > config.CENTRED_MAX_CM:
                         self.belt(STOP)
                         running = False
-                        self.ask(f"Item off the middle of the belt ({nearest} cm). Take it off,"
+                        self.ask(f">>> Item off the middle of the belt ({nearest} cm). Take it off,"
                                  " press Enter ... ")
                     else:
                         k = self.link.tick_at(t_centre)
@@ -221,7 +227,8 @@ class Station2:
                 if active and s.output_int_register_29 == active["job"] and "held" not in active:
                     active["held"] = s.output_int_register_28 == 2
                     if active["held"]:
-                        on_belt.remove(active)
+                        if active in on_belt:
+                            on_belt.remove(active)
                     else:
                         print("  missed: the item stays on the belt")
                 if active and s.output_int_register_27 == active["job"]:
@@ -240,17 +247,21 @@ class Station2:
                 if running and close:
                     self.belt(STOP)
                     running = False
+                    print("  belt paused: the robot is busy and the next item is close")
                 elif not running and not close:
                     self.belt(FORWARD)
                     running, t_run = True, time.monotonic()
+                    print("  belt running")
                 if running and time.monotonic() - t_run > config.ENCODER_GRACE_S \
                         and self.link.tick_rate() < config.MIN_TICK_RATE:
                     raise StationError("The belt runs but the encoder does not count")
                 for item in on_belt:
+                    if item is active and "held" not in active:
+                        continue          # the robot follows it down the belt; its grip check decides
                     if s1_m + (tick - item["s1"]) / config.TICKS_PER_M >= config.END_M:
                         self.belt(STOP)
                         running = False
-                        self.ask("An item reached the belt end without being picked. Take it"
+                        self.ask(">>> An item reached the belt end without being picked. Take it"
                                  " off, press Enter ... ")
                         on_belt.remove(item)
                         if item in queue:
@@ -258,6 +269,9 @@ class Station2:
                         break
         finally:
             self.belt(STOP)
+        left = len(on_belt) + (edge.t_in is not None)       # + one in front of S1 now
+        if left:
+            print(f"  {x} on the board, done. {left} more item(s) still on the belt: take them off")
         return placed
 
     def board_to_omron(self, n):
@@ -294,7 +308,9 @@ def build_program(poses=None):
             omron_row_end=p("omron_row_end"), omron_col_end=p("omron_col_end"),
             omron_rows=config.OMRON_GRID[0], omron_cols=config.OMRON_GRID[1],
             above=config.ABOVE_M, belt_direction=config.BELT_DIRECTION,
-            ticks_per_m=config.TICKS_PER_M, pick_v=config.PICK_V, pick_a=config.PICK_A,
+            ticks_per_m=config.TICKS_PER_M, encoder_type=config.ENCODER_TYPE,
+            encoder_a=config.ENCODER_A, encoder_b=config.ENCODER_B,
+            pick_v=config.PICK_V, pick_a=config.PICK_A,
             move_v=config.MOVE_V, move_a=config.MOVE_A, joint_v=config.JOINT_V,
             joint_a=config.JOINT_A, grip_speed=config.GRIP_SPEED, grip_force=config.GRIP_FORCE,
             pim60_di=-1 if config.PIM60_DI is None else config.PIM60_DI)
@@ -342,6 +358,8 @@ def main():
     except KeyboardInterrupt:
         station.belt(STOP)
         print("\nStopped by Ctrl+C.")
+    except StationError as e:
+        print(f"\n{e}")
     finally:
         station.close()
 
