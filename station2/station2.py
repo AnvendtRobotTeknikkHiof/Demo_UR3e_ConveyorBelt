@@ -34,10 +34,10 @@ STOP_BITS = 0b11100000        # standard digital outputs 5 (fwd), 6 (bwd), 7 (st
 
 OUTPUTS = ["timestamp", "runtime_state", "robot_mode", "safety_mode",
            "output_double_register_24"] + [f"output_int_register_{n}" for n in (24, 26, 27, 28, 29)]
-INPUTS = [f"input_int_register_{n}" for n in (25, 26, 27, 28, 29, 30)] \
+INPUTS = [f"input_int_register_{n}" for n in (25, 26, 27, 28, 29, 30, 31)] \
     + [f"input_double_register_{n}" for n in (24, 25, 27)] \
     + ["standard_digital_output_mask", "standard_digital_output"]
-INPUT_TYPES = ["INT32"] * 6 + ["DOUBLE"] * 3 + ["UINT8", "UINT8"]
+INPUT_TYPES = ["INT32"] * 7 + ["DOUBLE"] * 3 + ["UINT8", "UINT8"]
 
 
 class StationError(RuntimeError):
@@ -60,6 +60,7 @@ class Link:
         self.state = self.con.receive()
         self.ticks = deque(maxlen=250)
         self.alive = True
+        self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._receive, daemon=True)
         self.thread.start()
 
@@ -76,10 +77,25 @@ class Link:
             if hasattr(s, "output_double_register_24"):
                 self.ticks.append((time.monotonic(), s.output_double_register_24))
 
+    def start_heartbeat(self):
+        """After every input has a value: the robot stops the belt when this goes quiet
+        for 1 s (the laptop crashed or hung)."""
+        threading.Thread(target=self._heartbeat, daemon=True).start()
+
+    def _heartbeat(self):
+        n = 0
+        while self.alive:
+            n += 1
+            self.send(input_int_register_31=n)
+            time.sleep(0.1)
+
     def send(self, **values):
-        for name, value in values.items():
-            setattr(self.inp, name, value)
-        self.con.send(self.inp)
+        with self.lock:
+            if not self.alive:        # closed: a thread still stopping must not send
+                return
+            for name, value in values.items():
+                setattr(self.inp, name, value)
+            self.con.send(self.inp)
 
     def tick_at(self, t):
         """Tick at laptop time t, interpolated (t within the last 2 s)."""
@@ -109,11 +125,12 @@ class Station2:
         self.seq, self.job = s.output_int_register_26, s.output_int_register_27
         self.link.send(input_int_register_25=0, input_int_register_26=self.seq,
                        input_int_register_27=self.job, input_int_register_28=0,
-                       input_int_register_29=0, input_int_register_30=0,
+                       input_int_register_29=0, input_int_register_30=0, input_int_register_31=0,
                        input_double_register_24=config.BELT_VOLTS,
                        input_double_register_25=config.START_PAUSE_S,
                        input_double_register_27=PARKED,
                        standard_digital_output_mask=0, standard_digital_output=0)
+        self.link.start_heartbeat()
         self.sensors = SensorReader()
         self.empty = None         # sensor readings with an empty belt
 

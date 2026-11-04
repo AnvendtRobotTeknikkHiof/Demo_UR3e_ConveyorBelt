@@ -3,7 +3,8 @@ def station2():
   # are filled from config.py and poses.json. Every line inside must stay indented: the
   # controller ends a network program at the first "end" at the start of a line.
   #
-  # Laptop -> robot: in int 25/26 belt command/sequence, float 24 volts, float 25 start
+  # Laptop -> robot: in int 31 laptop heartbeat (silent 1 s = belt stops),
+  #   in int 25/26 belt command/sequence, float 24 volts, float 25 start
   #   pause; in int 27 job number, int 28 job type (1 belt->board, 2 board->Omron,
   #   3 home above the belt), int 29 board slot, int 30 Omron slot, float 27 start tick.
   # Robot -> laptop: out float 24 tick, int 24 heartbeat, int 26 belt sequence done,
@@ -132,13 +133,27 @@ def station2():
   write_output_integer_register(27, read_input_integer_register(27))
   write_output_integer_register(26, read_input_integer_register(26))
 
-  # ---- tick and heartbeat to the laptop, every control cycle ----
+  # ---- tick and heartbeat to the laptop, every control cycle (2 ms). The laptop's own
+  # heartbeat silent for 1 s (crashed, hung, cable out): stop the belt ----
   thread link_thread():
     hb = 0
+    pc = read_input_integer_register(31)
+    silent = 0
     while True:
       write_output_float_register(24, encoder_get_tick_count(0))
       write_output_integer_register(24, hb)
       hb = hb + 1
+      if read_input_integer_register(31) != pc:
+        pc = read_input_integer_register(31)
+        silent = 0
+      elif silent < 500:
+        silent = silent + 1
+        if silent == 500:
+          set_standard_digital_out(5, False)
+          set_standard_digital_out(6, False)
+          set_standard_digital_out(7, True)
+        end
+      end
       sync()
     end
   end
