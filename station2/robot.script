@@ -74,6 +74,7 @@ def station2():
   def belt_to_board(n):
     # open (a miss leaves it closed), wait above the belt for the start tick,
     # follow the belt, grip, lift
+    movej({pick_above}, a={joint_a}, v={joint_v})   # normally there already
     gripper(0)
     while encoder_get_tick_count(0) < read_input_float_register(27):
       sync()
@@ -98,7 +99,7 @@ def station2():
     if report_grip():
       place_at(omron(m))
     end
-    movej({pick_above}, a={joint_a}, v={joint_v})
+    # stays here: the next board slot is close; job 3 (PIM60) goes back above the belt
   end
   def pim60():
     # -1 = no camera configured, 1 = items seen on the board, 0 = board empty
@@ -207,6 +208,7 @@ def station2():
     elif kind == 2:
       board_to_omron(read_input_integer_register(29), read_input_integer_register(30))
     elif kind == 3:
+      movej({pick_above}, a={joint_a}, v={joint_v})   # back above the belt, out of the camera's view
       write_output_integer_register(30, pim60())
     end
     write_output_integer_register(27, job)
