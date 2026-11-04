@@ -1,7 +1,7 @@
 """
 Measure encoder ticks per metre: an item runs from S4 to S2 (1.62 m, tape-measured
 sensor positions), ticks per metre = ticks between them / distance.
-Needs the robot program running (python station2/station.py start). The arm does not move.
+Needs the robot program running (python station2/station2.py start). The arm does not move.
 
     python station2/tools/calibrate.py            3 runs
     python station2/tools/calibrate.py --runs 5
@@ -18,7 +18,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config                                       # noqa: E402
 from iolink import Edge                             # noqa: E402
-from station import FORWARD, STOP, Station2         # noqa: E402
+from station2 import FORWARD, STOP, Station2         # noqa: E402
 
 FIRST, LAST = "S4", "S2"
 

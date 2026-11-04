@@ -17,7 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from station import POSES_FILE, Link, StationError   # noqa: E402
+from station2 import POSES_FILE, Link, StationError   # noqa: E402
 
 POSES = ["pick_above", "pick", "board_origin", "board_row_end", "board_col_end",
          "omron_origin", "omron_row_end", "omron_col_end"]

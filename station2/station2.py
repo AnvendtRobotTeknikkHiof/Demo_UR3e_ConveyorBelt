@@ -2,11 +2,11 @@
 Station 2: UR3e#2 picks items from the moving belt onto the temp board, and from the
 board onto the Omron.
 
-    python station2/station.py start      send robot.script (robot in Remote mode)
-    python station2/station.py run 3      fill the board with 3 items, then (Enter when
+    python station2/station2.py start      send robot.script (robot in Remote mode)
+    python station2/station2.py run 3      fill the board with 3 items, then (Enter when
                                           the Omron is there) move them to the Omron
-    python station2/station.py stop       stop the program and the belt
-    python station2/station.py show       print the robot program, send nothing
+    python station2/station2.py stop       stop the program and the belt
+    python station2/station2.py show       print the robot program, send nothing
 
 main.py uses the same calls: Station2().fill_board(x), then board_to_omron(x).
 """

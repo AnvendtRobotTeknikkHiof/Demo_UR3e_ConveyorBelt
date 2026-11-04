@@ -1,5 +1,5 @@
 def station2():
-  # UR3e#2 program, sent by station.py (port 30002, Remote mode). The names in braces
+  # UR3e#2 program, sent by station2.py (port 30002, Remote mode). The names in braces
   # are filled from config.py and poses.json. Every line inside must stay indented: the
   # controller ends a network program at the first "end" at the start of a line.
   #

@@ -12,7 +12,7 @@ close, the belt pauses: the encoder stops too, so every item's position stays ri
 ```
 laptop                                     UR3e#2 (robot.script, sent on port 30002)
 iolink.py   S1 over HTTP, ~14/s            thread: encoder tick, heartbeat -> registers
-station.py  RTDE (port 30004) <-> jobs     thread: belt commands (DO5/6/7, AO1)
+station2.py RTDE (port 30004) <-> jobs     thread: belt commands (DO5/6/7, AO1)
                                            main:   job 1 belt->board, 2 board->Omron, 3 PIM60
 ```
 
@@ -20,8 +20,8 @@ station.py  RTDE (port 30004) <-> jobs     thread: belt commands (DO5/6/7, AO1)
 | File | What |
 |---|---|
 | `config.py` | every setting: IPs, sensor positions, ticks/m, offset, grid sizes, PIM60 input |
-| `station.py` | `Station2`: `start()`, `fill_board(x)`, `board_to_omron(n)`, `stop()` |
-| `robot.script` | the whole robot program; `station.py` fills in poses and settings |
+| `station2.py` | `Station2`: `start()`, `fill_board(x)`, `board_to_omron(n)`, `stop()` |
+| `robot.script` | the whole robot program; `station2.py` fills in poses and settings |
 | `iolink.py` | reads the laser sensors |
 | `tools/teach.py` | records the poses into `poses.json` |
 | `tools/calibrate.py` | measures encoder ticks per metre |
@@ -38,9 +38,9 @@ station.py  RTDE (port 30004) <-> jobs     thread: belt commands (DO5/6/7, AO1)
 ## Run
 Switch the pendant to **Remote**, then:
 ```
-python station2/station.py start        program on the robot, arm above the belt
-python station2/station.py run 3        3 items: belt -> board, Enter, board -> Omron
-python station2/station.py stop         program and belt stop
+python station2/station2.py start        program on the robot, arm above the belt
+python station2/station2.py run 3        3 items: belt -> board, Enter, board -> Omron
+python station2/station2.py stop         program and belt stop
 ```
 `python station2/tools/calibrate.py` checks ticks per metre (pass: 3 runs within 1 %).
 Retune `OFFSET_MM` when the belt speed changes: more negative if the gripper comes down
@@ -65,5 +65,5 @@ behind the item, less negative if in front of it.
   finger on the item. The item must be in the middle of the belt (S1 reads 19-22 cm).
 - The Robotiq gripper loses its activation at power-off; the program activates it.
 - Network programs end at the first `end` at the start of a line, so `robot.script` is
-  indented and `station.py` refuses to send it otherwise.
+  indented and `station2.py` refuses to send it otherwise.
 - The history of the experiments (stages 0-7, software encoder) is in git before this folder.
