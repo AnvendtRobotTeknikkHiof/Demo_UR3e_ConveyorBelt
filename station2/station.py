@@ -232,9 +232,11 @@ class Station2:
                     else:
                         print("  missed: the item stays on the belt")
                 if active and s.output_int_register_27 == active["job"]:
-                    if active.get("held"):
+                    if s.output_int_register_28 == 2:     # checked again at the board slot
                         placed += 1
                         print(f"  on the board: {placed} of {x}")
+                    elif active.get("held"):
+                        print("  dropped on the way to the board: take it away")
                     active = None
                 if active is None and queue:
                     active = queue.popleft()

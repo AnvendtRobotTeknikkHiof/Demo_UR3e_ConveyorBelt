@@ -57,17 +57,18 @@ def station2():
   def up(x):
     return p[x[0], x[1], x[2] + {above}, x[3], x[4], x[5]]
   end
-  def place_at(s):
-    movej(up(s), a={joint_a}, v={joint_v})
-    movel(s, a={move_a}, v={move_v})
-    gripper(0)
-    movel(up(s), a={move_a}, v={move_v})
-  end
   def report_grip():
     obj = grip_get("OBJ")
     write_output_integer_register(28, obj)
     write_output_integer_register(29, read_input_integer_register(27))
     return obj == 2
+  end
+  def place_at(s):
+    movej(up(s), a={joint_a}, v={joint_v})
+    movel(s, a={move_a}, v={move_v})
+    report_grip()                           # still held? (it may drop on the way)
+    gripper(0)
+    movel(up(s), a={move_a}, v={move_v})
   end
 
   # ---- jobs ----
