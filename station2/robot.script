@@ -54,8 +54,8 @@ def station2():
   def omron(i):
     return slot({omron_origin}, {omron_row_end}, {omron_col_end}, {omron_rows}, {omron_cols}, i)
   end
-  def up(x):
-    return p[x[0], x[1], x[2] + {above}, x[3], x[4], x[5]]
+  def up(x, h):
+    return p[x[0], x[1], x[2] + h, x[3], x[4], x[5]]
   end
   def report_grip():
     obj = grip_get("OBJ")
@@ -63,12 +63,13 @@ def station2():
     write_output_integer_register(29, read_input_integer_register(27))
     return obj == 2
   end
-  def place_at(s):
-    movej(up(s), a={joint_a}, v={joint_v})
+  def place_at(s, h):
+    # h: approach height (the Omron tray's far corner is at the edge of the reach)
+    movej(up(s, h), a={joint_a}, v={joint_v})
     movel(s, a={move_a}, v={move_v})
     report_grip()                           # still held? (it may drop on the way)
     gripper(0)
-    movel(up(s), a={move_a}, v={move_v})
+    movel(up(s, h), a={move_a}, v={move_v})
   end
 
   # ---- jobs ----
@@ -86,19 +87,19 @@ def station2():
     movel({pick_above}, a={pick_a}, v={pick_v})
     stop_conveyor_tracking()
     if report_grip():
-      place_at(board(n))
+      place_at(board(n), {above})
     end
     movej({pick_above}, a={joint_a}, v={joint_v})
   end
   def board_to_omron(n, m):
     gripper(0)
     s = board(n)
-    movej(up(s), a={joint_a}, v={joint_v})
+    movej(up(s, {above}), a={joint_a}, v={joint_v})
     movel(s, a={move_a}, v={move_v})
     gripper(255)
-    movel(up(s), a={move_a}, v={move_v})
+    movel(up(s, {above}), a={move_a}, v={move_v})
     if report_grip():
-      place_at(omron(m))
+      place_at(omron(m), {omron_above})
     end
     # stays here: the next board slot is close; job 3 (home) goes back above the belt
   end

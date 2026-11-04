@@ -309,7 +309,7 @@ def build_program(poses=None):
             board_cols=config.BOARD_GRID[1], omron_origin=p("omron_origin"),
             omron_row_end=p("omron_row_end"), omron_col_end=p("omron_col_end"),
             omron_rows=config.OMRON_GRID[0], omron_cols=config.OMRON_GRID[1],
-            above=config.ABOVE_M, belt_direction=config.BELT_DIRECTION,
+            above=config.ABOVE_M, omron_above=config.OMRON_ABOVE_M, belt_direction=config.BELT_DIRECTION,
             ticks_per_m=config.TICKS_PER_M, encoder_type=config.ENCODER_TYPE,
             encoder_a=config.ENCODER_A, encoder_b=config.ENCODER_B,
             pick_v=config.PICK_V, pick_a=config.PICK_A,

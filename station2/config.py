@@ -30,8 +30,9 @@ END_M = 1.935             # an item not held gets this far: stop the belt (12 cm
 
 # Temp board and Omron tray: grids from three taught corners (tools/teach.py)
 BOARD_GRID = (2, 3)       # rows, columns
-OMRON_GRID = (2, 3)
-ABOVE_M = 0.10            # approach height above a slot
+OMRON_GRID = (2, 2)
+ABOVE_M = 0.10            # approach height above a board slot
+OMRON_ABOVE_M = 0.06      # above an Omron slot: the far corner is out of reach at 0.10
 
 # Robot moves
 PICK_V, PICK_A = 0.4, 1.5     # down to the belt and up again, m/s, m/s2

@@ -54,6 +54,8 @@ def main():
         side_mm = ((above[0] - pick[0]) ** 2 + (above[1] - pick[1]) ** 2) ** 0.5 * 1000
         print(f"pick_above is {(above[2] - pick[2]) * 1000:.0f} mm above pick, {side_mm:.1f} mm"
               " to the side" + ("  <-- must be straight above (< 2 mm)" if side_mm > 2 else ""))
+    if all(p in wanted for p in POSES if p.startswith("omron")):
+        poses.pop("omron_placeholder", None)        # the real tray is taught now
     missing = [p for p in POSES if p not in poses]
     with open(POSES_FILE, "w") as f:
         json.dump(poses, f, indent=2)
