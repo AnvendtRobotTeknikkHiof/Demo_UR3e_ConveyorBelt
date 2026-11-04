@@ -5,9 +5,9 @@ def station2():
   #
   # Laptop -> robot: in int 25/26 belt command/sequence, float 24 volts, float 25 start
   #   pause; in int 27 job number, int 28 job type (1 belt->board, 2 board->Omron,
-  #   3 read PIM60), int 29 board slot, int 30 Omron slot, float 27 start tick.
+  #   3 home above the belt), int 29 board slot, int 30 Omron slot, float 27 start tick.
   # Robot -> laptop: out float 24 tick, int 24 heartbeat, int 26 belt sequence done,
-  #   int 27 job done, int 28 gripper OBJ (2 = held), int 29 job of that OBJ, int 30 PIM60.
+  #   int 27 job done, int 28 gripper OBJ (2 = held), int 29 job of that OBJ.
   {payload}
   {tcp}
 
@@ -100,17 +100,7 @@ def station2():
     if report_grip():
       place_at(omron(m))
     end
-    # stays here: the next board slot is close; job 3 (PIM60) goes back above the belt
-  end
-  def pim60():
-    # -1 = no camera configured, 1 = items seen on the board, 0 = board empty
-    if {pim60_di} < 0:
-      return -1
-    end
-    if get_standard_digital_in({pim60_di}):
-      return 1
-    end
-    return 0
+    # stays here: the next board slot is close; job 3 (home) goes back above the belt
   end
 
   # ---- start: encoder set up, belt stopped, gripper active and open ----
@@ -209,8 +199,7 @@ def station2():
     elif kind == 2:
       board_to_omron(read_input_integer_register(29), read_input_integer_register(30))
     elif kind == 3:
-      movej({pick_above}, a={joint_a}, v={joint_v})   # back above the belt, out of the camera's view
-      write_output_integer_register(30, pim60())
+      movej({pick_above}, a={joint_a}, v={joint_v})   # back above the belt
     end
     write_output_integer_register(27, job)
   end

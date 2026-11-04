@@ -33,10 +33,6 @@ BOARD_GRID = (2, 3)       # rows, columns
 OMRON_GRID = (2, 3)
 ABOVE_M = 0.10            # approach height above a slot
 
-# PIM60 #2 camera: standard digital input on UR3e#2, High = items seen on the board.
-# None = no camera yet (the robot's own count is used alone).
-PIM60_DI = None
-
 # Robot moves
 PICK_V, PICK_A = 0.4, 1.5     # down to the belt and up again, m/s, m/s2
 MOVE_V, MOVE_A = 0.25, 1.2    # MoveL at the board and the Omron

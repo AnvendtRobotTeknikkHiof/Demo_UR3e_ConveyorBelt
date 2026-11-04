@@ -28,12 +28,12 @@ POSES_FILE = os.path.join(HERE, "poses.json")
 PLAYING, STOPPED = 2, 1       # runtime_state
 ROBOT_ON, SAFETY_NORMAL = 7, 1
 FORWARD, STOP = 1, 3          # belt commands
-BELT_TO_BOARD, BOARD_TO_OMRON, READ_PIM60 = 1, 2, 3   # job types
+BELT_TO_BOARD, BOARD_TO_OMRON, HOME = 1, 2, 3   # job types
 PARKED = 1e9                  # a start tick the encoder never reaches
 STOP_BITS = 0b11100000        # standard digital outputs 5 (fwd), 6 (bwd), 7 (stop)
 
 OUTPUTS = ["timestamp", "runtime_state", "robot_mode", "safety_mode",
-           "output_double_register_24"] + [f"output_int_register_{n}" for n in (24, 26, 27, 28, 29, 30)]
+           "output_double_register_24"] + [f"output_int_register_{n}" for n in (24, 26, 27, 28, 29)]
 INPUTS = [f"input_int_register_{n}" for n in (25, 26, 27, 28, 29, 30)] \
     + [f"input_double_register_{n}" for n in (24, 25, 27)] \
     + ["standard_digital_output_mask", "standard_digital_output"]
@@ -277,8 +277,8 @@ class Station2:
         return placed
 
     def board_to_omron(self, n):
-        """Move board slots 0..n-1 to the Omron. Returns (moved, pim60): pim60 is True when
-        the camera sees items left on the board, None without a camera."""
+        """Move board slots 0..n-1 to the Omron, then go back above the belt. Returns how
+        many were moved (the grip is checked again at each Omron slot)."""
         moved = 0
         for i in range(n):
             s = self.wait_job(self.send_job(BOARD_TO_OMRON, board=i, omron=moved))
@@ -286,8 +286,8 @@ class Station2:
                 moved += 1
             else:
                 print(f"  board slot {i}: nothing gripped")
-        pim60 = self.wait_job(self.send_job(READ_PIM60)).output_int_register_30
-        return moved, None if pim60 < 0 else pim60 == 1
+        self.wait_job(self.send_job(HOME))
+        return moved
 
     def close(self):
         self.sensors.close()
@@ -314,8 +314,7 @@ def build_program(poses=None):
             encoder_a=config.ENCODER_A, encoder_b=config.ENCODER_B,
             pick_v=config.PICK_V, pick_a=config.PICK_A,
             move_v=config.MOVE_V, move_a=config.MOVE_A, joint_v=config.JOINT_V,
-            joint_a=config.JOINT_A, grip_speed=config.GRIP_SPEED, grip_force=config.GRIP_FORCE,
-            pim60_di=-1 if config.PIM60_DI is None else config.PIM60_DI)
+            joint_a=config.JOINT_A, grip_speed=config.GRIP_SPEED, grip_force=config.GRIP_FORCE)
     lines = program.rstrip().splitlines()
     if any(line.strip() and not line.startswith(" ") for line in lines[1:-1]):
         raise StationError("robot.script: every line but the first and last must be indented")
@@ -354,9 +353,8 @@ def main():
             print(f"Filling the board with {x} items. Put them on the belt.")
             placed = station.fill_board(x)
             input(f"{placed} items on the board. Press Enter when the Omron is at UR3e#2 ... ")
-            moved, pim60 = station.board_to_omron(placed)
-            print(f"{moved} of {placed} moved to the Omron. Board empty:"
-                  f" {'unknown (no camera)' if pim60 is None else not pim60}")
+            moved = station.board_to_omron(placed)
+            print(f"{moved} of {placed} moved to the Omron.")
     except KeyboardInterrupt:
         station.belt(STOP)
         print("\nStopped by Ctrl+C.")
