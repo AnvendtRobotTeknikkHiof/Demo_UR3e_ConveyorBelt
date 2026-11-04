@@ -1,93 +1,123 @@
 """
-Runs the whole loop from one PC. The Omron starts loaded at UR3_1.
+The whole loop from one PC. The Omron starts at station1, loaded with ITEMS cylinders.
 
-  1. Omron at UR3_1 -> UR3#1 picks items off the Omron onto the conveyor
-     while the SICK PIM60 sees items -> FINISHED k   (k = 0 stops the loop)
-  2. UR3#2 starts the conveyor and the Omron drives to UR3_2 at the same time
-  3. Omron at UR3_2 -> UR3#2 picks k items off the belt onto the Omron,
-     then stops the belt -> FINISHED
-  4. Omron drives back to UR3_1, repeat
+  1. station2 starts filling its temp board from the belt (in a thread)
+  2. station1 (UR3e#1) picks every cylinder off the Omron onto the belt
+  3. the Omron drives Route1 to station2
+  4. when all ITEMS are on the board, station2 (UR3e#2) moves them to the Omron
+  5. the Omron drives Route2 back to station1, repeat
 
-Connections:
-  PC -> Omron   ARCL, port 7171                       (omron.py)
-  UR3 -> PC     one TCP port per UR3 (50001, 50002)   (ur3.py + *.script)
-  PC -> UR3     Dashboard Server 29999, optional      (ur3.py)
+    python main.py          run until Ctrl+C
+    python main.py 2        run 2 rounds
+
+Both UR3e in Remote mode. station2's program is sent at the start; station1 uploads its
+own (ur_rtde) for every cylinder.
 """
-from omron import ARCL, HOST, PORT, PASSWORD
-from ur3 import UR3Station, Dashboard, CMD_ARRIVED, CMD_CONVEYOR_START
+import os
+import sys
+import threading
+import time
 
-# goal:    goal name in MobilePlanner
-# port:    port the UR3 program connects to on this PC
-# ur_ip:   UR3 IP for the Dashboard Server, None = start the program on the pendant
-# program: .urp file to load and play via the Dashboard Server
-UR3_1 = {"name": "UR3_1", "goal": "UR3_1", "port": 50001, "ur_ip": None, "program": "pick.urp"}
-UR3_2 = {"name": "UR3_2", "goal": "UR3_2", "port": 50002, "ur_ip": None, "program": "place.urp"}
-GOTO_RETRIES = 3
-TASK_TIMEOUT = None   # seconds to wait for FINISHED, None = wait forever
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [os.path.join(HERE, "station1"), os.path.join(HERE, "station2")]
+import config as station2_config                     # noqa: E402
+from omron import ARCL, HOST, PORT, PASSWORD         # noqa: E402
+from station1 import get_cylinder, pick_object       # noqa: E402
+from station2 import Station2, StationError          # noqa: E402
 
-
-def drive_to(robot, goal):
-    for attempt in range(1, GOTO_RETRIES + 1):
-        print(f"Omron: Driving to {goal} (attempt {attempt})")
-        if robot.goto(goal, timeout=120):
-            print(f"Omron: Arrived at {goal}")
-            return True
-    return False
+ITEMS = 4                 # cylinders in the loop, max 6 (the 2x3 board)
+ROUTE_TO_2 = "Route1"     # MobilePlanner route station1 -> station2
+ROUTE_TO_1 = "Route2"     # station2 -> station1
+PLACE_GAP_M = 0.15        # belt travel since station1's last place before it places again
 
 
-def run_loop(robot, picker, placer):
-    cycle = 0
+class Background(threading.Thread):
+    """Runs fn in a thread; join() returns its result or raises its error here."""
+
+    def __init__(self, fn, *args):
+        super().__init__(daemon=True)
+        self.fn, self.args, self.result, self.error = fn, args, None, None
+        self.start()
+
+    def run(self):
+        try:
+            self.result = self.fn(*self.args)
+        except BaseException as e:
+            self.error = e
+
+    def join(self, timeout=None):
+        super().join(timeout)
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def unload_station1(station, filling):
+    """station1 puts every cylinder on the Omron onto the belt. Returns how many.
+    Before each one the belt must have moved PLACE_GAP_M since the last one: station2
+    pauses the belt when it is busy, and station1 always places on the same spot."""
+    gap = PLACE_GAP_M * station2_config.TICKS_PER_M
+    placed, last_tick = 0, None
     while True:
-        cycle += 1
-        print(f"===== cycle {cycle} =====")
+        cylinder = get_cylinder()
+        if cylinder is None:
+            return placed
+        while last_tick is not None and station.link.state.output_double_register_24 - last_tick < gap:
+            if not filling.is_alive():
+                filling.join()                       # station2 stopped: raise its error
+                raise StationError("station2 stopped filling the board")
+            time.sleep(0.05)
+        pick_object(*cylinder, decision=1)
+        last_tick = station.link.state.output_double_register_24
+        placed += 1
+        print(f"station1: {placed} on the belt")
 
-        if not drive_to(robot, UR3_1["goal"]):
-            raise SystemExit(f"Could not reach {UR3_1['goal']}")
-        picker.send_cmd(CMD_ARRIVED)
-        k = picker.wait_finished(timeout=TASK_TIMEOUT)
-        print(f"UR3_1: Finished picking up {k} items")
-        if not k:
-            print("No items left on the Omron, stopping")
-            return
 
-        placer.send_cmd(CMD_CONVEYOR_START)
-        if not drive_to(robot, UR3_2["goal"]):
-            raise SystemExit(f"Could not reach {UR3_2['goal']}")
-        placer.send_cmd(CMD_ARRIVED, k)
-        # Re-sending k after a reconnect could place items twice, so stop instead
-        placed = placer.wait_finished(timeout=TASK_TIMEOUT, resend_on_reconnect=False)
-        print(f"UR3_2: Finished placing {placed} items")
-        if placed != k:
-            print(f"WARNING: UR3_1 picked {k} items but UR3_2 placed {placed}")
+def run_round(n, station, omron):
+    print(f"\n===== round {n} =====")
+    filling = Background(station.fill_board, ITEMS)
+    k = unload_station1(station, filling)
+    if k != ITEMS:
+        raise StationError(f"station1 found {k} of {ITEMS} cylinders: check the Omron and the"
+                           " belt, then restart")
+    print(f"Omron: {ROUTE_TO_2} to station2")
+    if not omron.run_route(ROUTE_TO_2):
+        raise StationError(f"The Omron did not finish {ROUTE_TO_2}")
+    placed = filling.join()
+    if placed != ITEMS:
+        raise StationError(f"station2 has {placed} of {ITEMS} on the board")
+    moved = station.board_to_omron(placed)
+    if moved != ITEMS:
+        raise StationError(f"station2 moved {moved} of {ITEMS} to the Omron: check the board")
+    print(f"Omron: {ROUTE_TO_1} to station1")
+    if not omron.run_route(ROUTE_TO_1):
+        raise StationError(f"The Omron did not finish {ROUTE_TO_1}")
 
 
 def main():
-    picker = UR3Station(UR3_1["name"], UR3_1["port"])
-    placer = UR3Station(UR3_2["name"], UR3_2["port"])
-    dashboards = []
-    robot = None
+    rounds = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    station = omron = None
     try:
-        for s in (UR3_1, UR3_2):
-            if s["ur_ip"]:
-                dash = Dashboard(s["ur_ip"])
-                dash.start_program(s["program"])
-                dashboards.append(dash)
-        picker.wait_connected()
-        placer.wait_connected()
-        robot = ARCL(HOST, PORT, PASSWORD)
-        robot.status()
-        run_loop(robot, picker, placer)
+        station = Station2()
+        station.start()
+        omron = ARCL(HOST, PORT, PASSWORD)
+        omron.status()
+        n = 0
+        while rounds is None or n < rounds:
+            n += 1
+            run_round(n, station, omron)
+        print(f"\n{n} round(s) done.")
     except KeyboardInterrupt:
-        print("Stopped by user")
+        print("\nStopped by Ctrl+C.")
+    except StationError as e:
+        print(f"\nSTOP: {e}")
     finally:
-        if robot:
-            robot.send("stop")
-            robot.close()
-        for dash in dashboards:
-            dash.stop()
-            dash.close()
-        picker.close()
-        placer.close()
+        if station:
+            station.stop()        # program and belt stop; a running fill_board thread ends too
+            station.close()
+        if omron:
+            omron.send("stop")
+            omron.close()
 
 
 if __name__ == "__main__":

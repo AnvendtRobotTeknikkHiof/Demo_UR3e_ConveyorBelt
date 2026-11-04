@@ -1,0 +1,222 @@
+def station2():
+  # UR3e#2 program, sent by station2.py (port 30002, Remote mode). The names in braces
+  # are filled from config.py and poses.json. Every line inside must stay indented: the
+  # controller ends a network program at the first "end" at the start of a line.
+  #
+  # Laptop -> robot: in int 31 laptop heartbeat (silent 1 s = belt stops),
+  #   in int 25/26 belt command/sequence, float 24 volts, float 25 start
+  #   pause; in int 27 job number, int 28 job type (1 belt->board, 2 board->Omron,
+  #   3 home above the belt), int 29 board slot, int 30 Omron slot, float 27 start tick.
+  # Robot -> laptop: out float 24 tick, int 24 heartbeat, int 26 belt sequence done,
+  #   int 27 job done, int 28 gripper OBJ (2 = held), int 29 job of that OBJ.
+  {payload}
+  {tcp}
+
+  # ---- gripper: Robotiq URCap server on the controller ----
+  def grip_set(name, value):
+    socket_set_var(name, value, "grip")     # sends "SET <name> <value>"
+    socket_read_byte_list(3, "grip")        # the server answers "ack"
+  end
+  def grip_get(name):
+    return socket_get_var(name, "grip")     # "GET <name>" -> number
+  end
+  def gripper(pos):
+    # 0 = open, 255 = closed; waits until the fingers have stopped
+    grip_set("POS", pos)
+    grip_set("GTO", 1)
+    while grip_get("PRE") != pos:
+      sleep(0.01)
+    end
+    while grip_get("OBJ") == 0:             # 0 = still moving
+      sleep(0.01)
+    end
+  end
+
+  # ---- grid slots from three taught corners: slot 0 = origin, row by row ----
+  def slot(o, row_end, col_end, rows, cols, i):
+    r = floor(i / cols)
+    c = i - r * cols
+    fr = 0.0
+    fc = 0.0
+    if rows > 1:
+      fr = r / (rows - 1.0)
+    end
+    if cols > 1:
+      fc = c / (cols - 1.0)
+    end
+    x = o[0] + fr * (row_end[0] - o[0]) + fc * (col_end[0] - o[0])
+    y = o[1] + fr * (row_end[1] - o[1]) + fc * (col_end[1] - o[1])
+    z = o[2] + fr * (row_end[2] - o[2]) + fc * (col_end[2] - o[2])
+    return p[x, y, z, o[3], o[4], o[5]]
+  end
+  def board(i):
+    return slot({board_origin}, {board_row_end}, {board_col_end}, {board_rows}, {board_cols}, i)
+  end
+  def omron(i):
+    return slot({omron_origin}, {omron_row_end}, {omron_col_end}, {omron_rows}, {omron_cols}, i)
+  end
+  def up(x, h):
+    return p[x[0], x[1], x[2] + h, x[3], x[4], x[5]]
+  end
+  def report_grip():
+    obj = grip_get("OBJ")
+    write_output_integer_register(28, obj)
+    write_output_integer_register(29, read_input_integer_register(27))
+    return obj == 2
+  end
+  def place_at(s, h):
+    # h: approach height (the Omron tray's far corner is at the edge of the reach)
+    movej(up(s, h), a={joint_a}, v={joint_v})
+    movel(s, a={move_a}, v={move_v})
+    report_grip()                           # still held? (it may drop on the way)
+    gripper(0)
+    movel(up(s, h), a={move_a}, v={move_v})
+  end
+
+  # ---- jobs ----
+  def belt_to_board(n):
+    # open (a miss leaves it closed), wait above the belt for the start tick,
+    # follow the belt, grip, lift
+    movej({pick_above}, a={joint_a}, v={joint_v})   # normally there already
+    gripper(0)
+    while encoder_get_tick_count(0) < read_input_float_register(27):
+      sync()
+    end
+    track_conveyor_linear({belt_direction}, {ticks_per_m})
+    movel({pick}, a={pick_a}, v={pick_v})
+    gripper(255)
+    movel({pick_above}, a={pick_a}, v={pick_v})
+    stop_conveyor_tracking()
+    if report_grip():
+      place_at(board(n), {above})
+    end
+    movej({pick_above}, a={joint_a}, v={joint_v})
+  end
+  def board_to_omron(n, m):
+    gripper(0)
+    s = board(n)
+    movej(up(s, {above}), a={joint_a}, v={joint_v})
+    movel(s, a={move_a}, v={move_v})
+    gripper(255)
+    movel(up(s, {above}), a={move_a}, v={move_v})
+    if report_grip():
+      place_at(omron(m), {omron_above})
+    end
+    # stays here: the next board slot is close; job 3 (home) goes back above the belt
+  end
+
+  # ---- start: encoder set up, belt stopped, gripper active and open ----
+  # A PolyScope program gets the encoder from Installation -> Conveyor Tracking; this one
+  # must set it up itself, or encoder 0 does not count
+  encoder_enable_pulse_decode(0, {encoder_type}, {encoder_a}, {encoder_b})
+  # conveyor_speed (analog out 1) must be in voltage mode: set it in Installation ->
+  # I/O Setup (a domain call here made the robot drop the program unread, 2026-11-03)
+  set_standard_digital_out(5, False)        # conveyor_fwd
+  set_standard_digital_out(6, False)        # conveyor_bcwd
+  set_standard_digital_out(7, True)         # conveyor_stop
+  sleep(0.5)
+  set_standard_digital_out(7, False)
+  if not socket_open("127.0.0.1", 63352, "grip"):
+    popup("No answer from the gripper server (port 63352)", "station2", error=True)
+    halt
+  end
+  if grip_get("STA") != 3:                  # activation is lost after power-off
+    grip_set("ACT", 1)
+    while grip_get("STA") != 3:
+      sleep(0.1)
+    end
+  end
+  grip_set("SPE", {grip_speed})
+  grip_set("FOR", {grip_force})
+  gripper(0)
+  # the laptop's last job and belt command are done, so they don't run again now
+  write_output_integer_register(27, read_input_integer_register(27))
+  write_output_integer_register(26, read_input_integer_register(26))
+
+  # ---- tick and heartbeat to the laptop, every control cycle (2 ms). The laptop's own
+  # heartbeat silent for 1 s (crashed, hung, cable out): stop the belt ----
+  thread link_thread():
+    hb = 0
+    pc = read_input_integer_register(31)
+    silent = 0
+    while True:
+      write_output_float_register(24, encoder_get_tick_count(0))
+      write_output_integer_register(24, hb)
+      hb = hb + 1
+      if read_input_integer_register(31) != pc:
+        pc = read_input_integer_register(31)
+        silent = 0
+      elif silent < 500:
+        silent = silent + 1
+        if silent == 500:
+          set_standard_digital_out(5, False)
+          set_standard_digital_out(6, False)
+          set_standard_digital_out(7, True)
+        end
+      end
+      sync()
+    end
+  end
+  link = run link_thread()
+
+  # ---- belt commands from the laptop. The run outputs latch: a pulse starts the
+  # belt and only conveyor_stop stops it ----
+  thread belt_thread():
+    while True:
+      seq = read_input_integer_register(26)
+      if seq != read_output_integer_register(26):
+        cmd = read_input_integer_register(25)
+        if cmd == 1 or cmd == 2:
+          volts = read_input_float_register(24)
+          if volts < 0.0:
+            volts = 0.0
+          elif volts > 2.0:
+            volts = 2.0
+          end
+          set_standard_analog_out(1, volts / 10.0)
+          set_standard_digital_out(5, False)
+          set_standard_digital_out(6, False)
+          set_standard_digital_out(7, False)
+          start_pause = read_input_float_register(25)   # "pause" is a reserved word
+          if start_pause > 0.0:
+            sleep(start_pause)
+          end
+          if cmd == 1:
+            set_standard_digital_out(5, True)
+          else:
+            set_standard_digital_out(6, True)
+          end
+          sleep(0.3)
+          set_standard_digital_out(5, False)
+          set_standard_digital_out(6, False)
+        elif cmd == 3:
+          set_standard_digital_out(5, False)
+          set_standard_digital_out(6, False)
+          set_standard_digital_out(7, True)
+        end
+        write_output_integer_register(26, seq)
+      else:
+        sleep(0.02)
+      end
+    end
+  end
+  belt = run belt_thread()
+
+  # ---- job loop: wait above the belt, ready for the next item ----
+  movej({pick_above}, a={joint_a}, v={joint_v})
+  while True:
+    while read_input_integer_register(27) == read_output_integer_register(27):
+      sync()
+    end
+    job = read_input_integer_register(27)
+    kind = read_input_integer_register(28)
+    if kind == 1:
+      belt_to_board(read_input_integer_register(29))
+    elif kind == 2:
+      board_to_omron(read_input_integer_register(29), read_input_integer_register(30))
+    elif kind == 3:
+      movej({pick_above}, a={joint_a}, v={joint_v})   # back above the belt
+    end
+    write_output_integer_register(27, job)
+  end
+end

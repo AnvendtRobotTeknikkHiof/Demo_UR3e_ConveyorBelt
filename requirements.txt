@@ -1,0 +1,7 @@
+# UR's official RTDE client (pip package "UrRtde", module "rtde"); not on PyPI under a plain name
+UrRtde @ git+https://github.com/UniversalRobots/RTDE_Python_Client_Library.git@main
+# station1/station1.py (UR3e#1): SDU's ur_rtde (modules rtde_control, rtde_receive)
+# No wheel for macOS or Python >= 3.13: it builds from source, which needs Boost (brew install boost)
+# and cmake. If it fails:  pip install cmake pybind11 setuptools setuptools_scm
+#                          pip install --no-build-isolation ur_rtde
+ur_rtde
