@@ -132,4 +132,6 @@ down behind the cylinder, less negative if in front of it).
 - Network programs end at the first `end` at the start of a line, so `robot.script` is
   indented and `station2.py` refuses to send it otherwise.
 - The Robotiq gripper loses its activation at power-off; both stations activate it.
+- ur_rtde built on macOS can't keep up at its default 500 Hz: UR3e#1 closes the
+  connection after ~1 s and the reconnect crashes Python. station1 connects at 125 Hz.
 - The history of the experiments (`pick_demo/`, stages 0-7, software encoder) is in git.

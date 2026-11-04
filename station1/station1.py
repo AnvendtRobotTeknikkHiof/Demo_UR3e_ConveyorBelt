@@ -137,7 +137,8 @@ def pick_object(x_camera, y_camera, decision):
         gripper.connect(ROBOT_IP, 63352)
         gripper_connected = True
 
-        controller = rtde_control.RTDEControlInterface(ROBOT_IP)
+        # 125 Hz: at the default 500 Hz the robot closes the connection after ~1 s on macOS
+        controller = rtde_control.RTDEControlInterface(ROBOT_IP, 125.0)
 
         targets = [
             ("Over sylinderen", above, OVER_OMRON_Q),
