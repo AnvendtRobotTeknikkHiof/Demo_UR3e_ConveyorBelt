@@ -77,6 +77,25 @@ class ARCL:
         self.send("stop")
         return False
 
+    def run_route(self, route, timeout=180.0):
+        """Drive a MobilePlanner route once and wait. True = finished, False = failed/timeout.
+        Unlike goto, "Arrived at" lines are goals on the way, not the end."""
+        self.drain()
+        self.send(f"patrolOnce {route}")
+        end = time.time() + timeout
+        while time.time() < end:
+            line = self.read_line(timeout=1.0)
+            if not line:
+                continue
+            low = line.lower()
+            if low.startswith("finished patrolling"):
+                return True
+            if "failed" in low or "interrupted" in low or "error" in low:
+                return False
+        print(f"Timeout on route {route}, stopping robot")
+        self.send("stop")
+        return False
+
     def status(self):
         self.send("oneLineStatus")
         return self.read_until("Status:", timeout=3.0)
@@ -90,9 +109,9 @@ if __name__ == "__main__":
     robot = ARCL(HOST, PORT, PASSWORD)
     try:
         robot.status()
-        for goal in ["UR3_1", "UR3_2"]:   # <-- your goal names from getgoals
-            ok = robot.goto(goal, timeout=120)
-            print(f"{goal}: {'arrived' if ok else 'FAILED'}")
+        for route in ["Route1", "Route2"]:   # station1 -> station2, station2 -> station1
+            ok = robot.run_route(route)
+            print(f"{route}: {'finished' if ok else 'FAILED'}")
             if not ok:
                 break
     finally:
