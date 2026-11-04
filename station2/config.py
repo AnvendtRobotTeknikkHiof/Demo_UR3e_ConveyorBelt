@@ -24,7 +24,7 @@ ENCODER_GRACE_S = 1.5     # the belt needs up to ~0.9 s to reach full speed
 
 # Pick from the belt
 PICK_M = 1.78             # item centre at the taught 'pick' pose, from belt start
-OFFSET_MM = -48          # + = start following later. Tune at the belt speed in use
+OFFSET_MM = -45          # + = start following later. Tune at the belt speed in use
 PAUSE_LEAD_M = 0.10       # robot busy and the next item this close to its start: pause the belt
 END_M = 1.935             # an item not held gets this far: stop the belt (12 cm past S2)
 
