@@ -14,7 +14,7 @@ import config
 class SensorReader:
     """Reads all sensors with one HTTP request (~73 ms) over a kept-open connection."""
 
-    def __init__(self, host=config.IOLINK_HOST, timeout=1.0):
+    def __init__(self, host=config.IOLINK_HOST, timeout=config.IOLINK_TIMEOUT_S):
         self.host, self.timeout, self.conn = host, timeout, None
         self.keys = {f"/iolinkmaster/port[{port}]/iolinkdevice/pdin": name
                      for name, (port, _) in config.SENSORS.items()}
@@ -71,7 +71,8 @@ class Edge:
         self.t_in = None
 
     def update(self, t, distance_cm):
-        """Return (centre time, readings, nearest cm) when an item has just left, else None."""
+        """Return (centre t, readings, nearest cm) when an item has just left, else None.
+        t is a time or an encoder tick; with ticks the centre stays right if the belt stops."""
         d = 0 if distance_cm is None else distance_cm    # no valid distance: very close
         if self.t_in is None:
             if d < self.empty - config.EMPTY_DROP_CM:

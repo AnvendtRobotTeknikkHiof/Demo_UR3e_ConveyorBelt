@@ -10,6 +10,7 @@ board onto the Omron.
 
 main.py uses the same calls: Station2().fill_board(x), then board_to_omron(x).
 """
+import http.client
 import json
 import os
 import socket
@@ -221,20 +222,21 @@ class Station2:
         placed, running = 0, False
         try:
             while placed < x:
-                t, values = self.sensors.read()     # IO-Link lost -> error, belt stops
+                t, values, paused = self.read_sensors()
+                if paused:
+                    running = False
                 self.check_running()
                 s = self.link.state
                 tick = s.output_double_register_24
-                passed = edge.update(t, values[config.TRIGGER])
+                passed = edge.update(self.link.tick_at(t), values[config.TRIGGER])
                 if passed:
-                    t_centre, readings, nearest = passed
+                    k, readings, nearest = passed       # k: tick at the item's centre
                     if readings < 3 or nearest > config.CENTRED_MAX_CM:
                         self.belt(STOP)
                         running = False
                         self.ask(f">>> Item off the middle of the belt ({nearest} cm). Take it off,"
                                  " press Enter ... ")
                     else:
-                        k = self.link.tick_at(t_centre)
                         item = {"s1": k, "start": k + (config.PICK_M - s1_m + config.OFFSET_MM
                                                        / 1000) * config.TICKS_PER_M}
                         on_belt.append(item)
@@ -292,6 +294,29 @@ class Station2:
         if left:
             print(f"  {x} on the board, done. {left} more item(s) still on the belt: take them off")
         return placed
+
+    def read_sensors(self):
+        """(time, readings, paused). When the IO-Link master doesn't answer (network hiccup),
+        the belt pauses and the read is retried for SENSOR_RETRY_S; positions stay right
+        because the encoder stops with the belt."""
+        try:
+            return (*self.sensors.read(), False)
+        except (OSError, http.client.HTTPException):
+            pass
+        self.belt(STOP)
+        print(f"  sensors not answering: belt paused, retrying for {config.SENSOR_RETRY_S} s")
+        end = time.monotonic() + config.SENSOR_RETRY_S
+        while True:
+            self.check_running()
+            try:
+                t, values = self.sensors.read()
+                print("  sensors back")
+                return t, values, True
+            except (OSError, http.client.HTTPException):
+                if time.monotonic() > end:
+                    raise StationError(f"No answer from the IO-Link master ({config.IOLINK_HOST})"
+                                       f" for {config.SENSOR_RETRY_S} s. Belt stopped.")
+                time.sleep(0.2)
 
     def board_to_omron(self, n):
         """Move board slots 0..n-1 to the Omron, then go back above the belt. Returns how

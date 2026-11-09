@@ -2,6 +2,8 @@
 
 ROBOT_IP = "158.39.162.151"
 IOLINK_HOST = "158.39.162.193"
+IOLINK_TIMEOUT_S = 0.5    # per sensor request (one takes ~73 ms)
+SENSOR_RETRY_S = 10       # sensors not answering: belt paused, retried this long, then stop
 
 # Laser sensors on the IO-Link master: name -> (IO-Link port, distance from belt start in m).
 # Only S1 is needed to pick; S4 and S2 are used by tools/calibrate.py.

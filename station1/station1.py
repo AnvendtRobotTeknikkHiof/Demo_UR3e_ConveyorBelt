@@ -106,8 +106,8 @@ PLACE_BELT_POSE = [
     0.47267070021945334,
     -0.07738163086626465,
     -0.04232684164967558,
-    -0.00820371887823487,
-    -2.340435163542522
+    0.00820371887823487,
+    2.340435163542522
 ]
 
 def pick_object(x_camera, y_camera, decision):
@@ -125,6 +125,8 @@ def pick_object(x_camera, y_camera, decision):
 
     pick = above.copy()
     pick[2] = -0.047  # Plukkhøyde: −47 mm
+    lift = pick.copy()
+    lift[2] = 0.121
 
     if pick[2] >= above[2]:
         raise ValueError("Plukkhøyden må være under tilnærmingshøyden.")
@@ -140,9 +142,16 @@ def pick_object(x_camera, y_camera, decision):
         # 125 Hz: at the default 500 Hz the robot closes the connection after ~1 s on macOS
         controller = rtde_control.RTDEControlInterface(ROBOT_IP, 125.0)
 
+        # Far out on the Omron the arm can't reach 121 mm up with the gripper straight down:
+        # lift as high as it can there, but never lower than the approach height.
+        while lift[2] > above[2] and not controller.getInverseKinematicsHasSolution(lift, OVER_OMRON_Q):
+            lift[2] = max(lift[2] - 0.01, above[2])
+        print(f"Løftehøyde: {lift[2] * 1000:.0f} mm")
+
         targets = [
             ("Over sylinderen", above, OVER_OMRON_Q),
             ("Plukk", pick, OVER_OMRON_Q),
+            ("Løft rett opp fra plukkstedet", lift, OVER_OMRON_Q),
             ("Over båndet", ABOVE_BELT_POSE, ABOVE_BELT_Q),
             ("Plassering", PLACE_BELT_POSE, ABOVE_BELT_Q),
         ]
@@ -197,9 +206,9 @@ def pick_object(x_camera, y_camera, decision):
                 "Avbryter uten å løfte."
             )
 
-        print("6. Løfter sylinderen")
-        if not controller.moveL(above, 0.10, 0.03):
-            raise RuntimeError("Løftingen mislyktes.")
+        print("6. Løfter sylinderen rett opp ved plukkstedet")
+        if not controller.moveL(lift, 0.05, 0.03):
+            raise RuntimeError("Det vertikale løftet fra plukkstedet mislyktes.")
 
         print("7. Kjører over transportbåndet")
         # Denne leddbanen må være kontrollert for klaring.

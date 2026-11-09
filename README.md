@@ -135,6 +135,8 @@ down behind the cylinder, less negative if in front of it).
 - The Robotiq gripper loses its activation at power-off; both stations activate it.
 - ur_rtde built on macOS can't keep up at its default 500 Hz: UR3e#1 closes the
   connection after ~1 s and the reconnect crashes Python. station1 connects at 125 Hz.
+- If the IO-Link master stops answering (seen over Wi-Fi), station2 pauses the belt and
+  retries for `SENSOR_RETRY_S` (10 s) before it stops; use a cable on the lab network.
 - If the PC crashes, UR3e#2 stops the belt by itself (PC heartbeat, int 31); the arm
   finishes the move it is in. UR3e#1 has no such guard: check it on the pendant.
 - The history of the experiments (`pick_demo/`, stages 0-7, software encoder) is in git.
